@@ -63,8 +63,8 @@ sealed class Credencial : IDisposable
             case ModoCredencial.Pfx:
                 if (!File.Exists(cfg.ArquivoPfx))
                     throw new CryptographicException($"O arquivo de credencial não foi encontrado em \"{cfg.ArquivoPfx}\". Verifique as Preferências.");
-                var colecao = new X509Certificate2Collection();
-                try { colecao.Import(cfg.ArquivoPfx, pin, X509KeyStorageFlags.UserKeySet); }
+                X509Certificate2Collection colecao;
+                try { colecao = X509CertificateLoader.LoadPkcs12CollectionFromFile(cfg.ArquivoPfx, pin, X509KeyStorageFlags.UserKeySet); }
                 catch (CryptographicException) { throw new CryptographicException("Senha do .pfx incorreta ou arquivo inválido."); }
                 foreach (var c in colecao)
                     if (c.HasPrivateKey && c.GetRSAPrivateKey() is { } rsa) chaves.Add((c, rsa));
@@ -98,7 +98,7 @@ sealed class Credencial : IDisposable
             case ModoCredencial.Windows:
                 return Repositorio.Pessoais().Where(c => c.HasPrivateKey).ToList();
             default:
-                return chaves.Select(c => new X509Certificate2(c.Cert.RawData)).ToList();
+                return chaves.Select(c => X509CertificateLoader.LoadCertificate(c.Cert.RawData)).ToList();
         }
     }
 

@@ -120,7 +120,7 @@ public static class CmsCifra
         var texto = Encoding.ASCII.GetString(bytes);
         if (texto.Contains("-----BEGIN CERTIFICATE-----"))
             return X509Certificate2.CreateFromPem(texto);
-        return new X509Certificate2(bytes);
+        return X509CertificateLoader.LoadCertificate(bytes);
     }
 
     /// <summary>Aceita o .p7m em DER ou em PEM (BEGIN CMS / BEGIN PKCS7).</summary>

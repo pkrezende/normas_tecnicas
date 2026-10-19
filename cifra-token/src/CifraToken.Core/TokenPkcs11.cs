@@ -107,7 +107,7 @@ public sealed class TokenPkcs11 : IDisposable
                 var attrs = sessao.GetAttributeValue(obj, new List<CKA> { CKA.CKA_VALUE, CKA.CKA_ID });
                 try
                 {
-                    var cert = new X509Certificate2(attrs[0].GetValueAsByteArray());
+                    var cert = X509CertificateLoader.LoadCertificate(attrs[0].GetValueAsByteArray());
                     if (cert.GetRSAPublicKey() is not null)
                         lista.Add(new CertificadoNoToken(cert, attrs[1].GetValueAsByteArray() ?? Array.Empty<byte>(), rotulo));
                 }
@@ -218,6 +218,29 @@ public sealed class TokenPkcs11 : IDisposable
             try
             {
                 using (mecanismo) return sessao.Decrypt(mecanismo, chave, data);
+            }
+            catch (Pkcs11Exception e)
+            {
+                throw new CryptographicException(Mensagem(e.RV), e);
+            }
+        }
+
+        /// <summary>Assina o resumo dentro do token (C_Sign com CKM_RSA_PKCS sobre o DigestInfo, PKCS#1 v1.5).</summary>
+        public override byte[] SignHash(byte[] hash, HashAlgorithmName hashAlgorithm, RSASignaturePadding padding)
+        {
+            if (padding != RSASignaturePadding.Pkcs1)
+                throw new CryptographicException("Só a assinatura RSA PKCS#1 v1.5 é suportada pelo token.");
+            byte[] prefixo = hashAlgorithm.Name switch
+            {
+                "SHA256" => Convert.FromHexString("3031300d060960864801650304020105000420"),
+                "SHA384" => Convert.FromHexString("3041300d060960864801650304020205000430"),
+                "SHA512" => Convert.FromHexString("3051300d060960864801650304020305000440"),
+                _ => throw new CryptographicException($"Resumo não suportado: {hashAlgorithm.Name}."),
+            };
+            try
+            {
+                using var mecanismo = Fabricas.MechanismFactory.Create(CKM.CKM_RSA_PKCS);
+                return sessao.Sign(mecanismo, chave, prefixo.Concat(hash).ToArray());
             }
             catch (Pkcs11Exception e)
             {

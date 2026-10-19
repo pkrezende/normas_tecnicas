@@ -8,6 +8,10 @@ Uso:
   cifratoken decifrar -i ARQUIVO.p7m -o SAIDA [--pfx MEU.pfx | --pkcs11 [BIBLIOTECA]]
   cifratoken cifrar-senha -i ARQUIVO -o SAIDA.enc
   cifratoken decifrar-senha -i ARQUIVO.enc -o SAIDA
+  cifratoken assinar -i ARQUIVO [-o ARQUIVO.p7s] (--pfx MEU.pfx | --pkcs11 [BIBLIOTECA] | -t IMPRESSAO_DIGITAL)
+                    [--politica AD-RB|AD-RT|politica.der] [--act URL] [--act-politica OID]
+  cifratoken verificar -i ARQUIVO [-s ARQUIVO.p7s]
+  cifratoken politica AD-RB|AD-RT|politica.der
   cifratoken destinatarios -i ARQUIVO.p7m
   cifratoken listar [--pkcs11 [BIBLIOTECA]]
 
@@ -19,6 +23,9 @@ Uso:
          sem caminho, procura as bibliotecas conhecidas. O PIN vem de CIFRATOKEN_PIN ou é pedido.
   cifrar-senha/decifrar-senha: formato .enc do Quimera e do openssl enc (AES-256-CBC, PBKDF2-SHA512,
          1.000.000 de iterações); a frase-senha vem de CIFRATOKEN_SENHA ou é pedida
+  assinar: assinatura destacada CAdES (.p7s). --politica inclui a Política de Assinatura ICP-Brasil
+         (DOC-ICP-15.03), baixada do ITI; AD-RT exige --act (carimbo do tempo RFC 3161).
+         ACT Defesa: https://sct.acdefesa.mil.br/timestamp (só nas redes cadastradas do MD e das Forças).
   Sem --pfx, a chave é procurada no repositório "Pessoal" (onde o middleware do token
   registra o certificado) e o middleware pede o PIN.
 """;
@@ -70,8 +77,7 @@ try
             if (Opcao("--pfx") is { } pfx)
             {
                 var senha = Environment.GetEnvironmentVariable("CIFRATOKEN_SENHA") ?? LerSenha("Senha do .pfx: ");
-                chaves = new X509Certificate2Collection();
-                chaves.Import(pfx, senha, X509KeyStorageFlags.UserKeySet);
+                chaves = X509CertificateLoader.LoadPkcs12CollectionFromFile(pfx, senha, X509KeyStorageFlags.UserKeySet);
             }
             var p7m = File.ReadAllBytes(Obrigatoria("-i"));
             byte[] claro;
@@ -107,6 +113,71 @@ try
             Console.WriteLine($"Decifrado: {Obrigatoria("-o")}");
             return 0;
         }
+        case "politica":
+        {
+            var pol = await PoliticaIcp.Resolver(args.Length > 1 ? args[1] : "AD-RB", new HttpClient());
+            Console.WriteLine($"{pol.Nome}\nOID: {pol.Oid}\nURL: {pol.Url}\nResumo ({pol.AlgoritmoResumo.Name}): {Convert.ToHexString(pol.Resumo)}");
+            return 0;
+        }
+        case "assinar":
+        {
+            var entrada = Obrigatoria("-i");
+            var saida = Opcao("-o") ?? entrada + ".p7s";
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+            var pol = Opcao("--politica") is { } np ? await PoliticaIcp.Resolver(np, http) : null;
+            var act = Opcao("--act");
+            X509Certificate2 cert;
+            RSA? chave = null;
+            TokenPkcs11? token = null;
+            var cadeia = new List<X509Certificate2>();
+            try
+            {
+                if (Opcao("--pfx") is { } pfx)
+                {
+                    var senha = Environment.GetEnvironmentVariable("CIFRATOKEN_SENHA") ?? LerSenha("Senha do .pfx: ");
+                    var colecao = X509CertificateLoader.LoadPkcs12CollectionFromFile(pfx, senha, X509KeyStorageFlags.UserKeySet);
+                    cert = colecao.Cast<X509Certificate2>().First(c => c.HasPrivateKey);
+                    cadeia.AddRange(colecao.Cast<X509Certificate2>());
+                }
+                else if (args.Contains("--pkcs11"))
+                {
+                    token = AbrirToken("--pkcs11");
+                    var certs = token.Certificados();
+                    var alvo = certs.FirstOrDefault(c => c.Certificado.Extensions.OfType<X509KeyUsageExtension>()
+                                   .All(k => k.KeyUsages.HasFlag(X509KeyUsageFlags.DigitalSignature) || k.KeyUsages.HasFlag(X509KeyUsageFlags.NonRepudiation)))
+                               ?? throw new CryptographicException("Nenhum certificado de assinatura no token.");
+                    Console.Error.WriteLine($"Certificado: {CmsCifra.Nome(alvo.Certificado)} (token {alvo.Token})");
+                    if (token.AvisoPin(alvo) is { } aviso) Console.Error.WriteLine(aviso);
+                    var pin = Environment.GetEnvironmentVariable("CIFRATOKEN_PIN") ?? LerSenha("PIN do token: ");
+                    chave = token.ChavePrivada(alvo, pin);
+                    cert = alvo.Certificado;
+                    cadeia.AddRange(certs.Select(c => c.Certificado));
+                }
+                else cert = Repositorio.PorImpressao(Obrigatoria("-t"));
+
+                var p7s = await AssinaturaCades.Assinar(File.ReadAllBytes(entrada), cert, chave, pol, act, http, cadeia, Opcao("--act-politica"));
+                File.WriteAllBytes(saida, p7s);
+                Console.WriteLine($"Assinado: {saida}" + (pol is null ? "" : $" (política {pol.Oid})") + (act is null ? "" : " com carimbo do tempo"));
+                return 0;
+            }
+            finally
+            {
+                chave?.Dispose();
+                token?.Dispose();
+            }
+        }
+        case "verificar":
+        {
+            var entrada = Obrigatoria("-i");
+            var v = AssinaturaCades.Verificar(File.ReadAllBytes(entrada), File.ReadAllBytes(Opcao("-s") ?? entrada + ".p7s"));
+            Console.WriteLine(v.Integra ? "ASSINATURA ÍNTEGRA" : "ASSINATURA INVÁLIDA" + (v.Erro is null ? "" : ": " + v.Erro));
+            Console.WriteLine($"Signatário: {v.Signatario}");
+            if (v.Politica is not null) Console.WriteLine($"Política: {v.Politica}");
+            if (v.Carimbo is not null)
+                Console.WriteLine($"Carimbo do tempo: {v.Carimbo:dd/MM/yyyy HH:mm:ss} UTC por {v.Act} ({(v.CarimboValido == true ? "íntegro" : "INVÁLIDO")})");
+            if (v.CadeiaStatus is not null) Console.WriteLine(v.CadeiaStatus);
+            return v.Integra && v.CarimboValido != false ? 0 : 1;
+        }
         case "destinatarios":
             foreach (var d in CmsCifra.Destinatarios(File.ReadAllBytes(Obrigatoria("-i"))))
                 Console.WriteLine(d);
@@ -132,7 +203,8 @@ try
     }
 }
 catch (Exception e) when (e is CryptographicException or ArgumentException or IOException
-                            or Net.Pkcs11Interop.Common.Pkcs11Exception or Net.Pkcs11Interop.Common.UnmanagedException)
+                            or Net.Pkcs11Interop.Common.Pkcs11Exception or Net.Pkcs11Interop.Common.UnmanagedException
+                            or HttpRequestException or InvalidOperationException)
 {
     Console.Error.WriteLine("Erro: " + e.Message);
     return 1;

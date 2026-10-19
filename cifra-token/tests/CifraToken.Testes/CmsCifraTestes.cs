@@ -17,7 +17,7 @@ public class CmsCifraTestes
             X509KeyUsageFlags.DigitalSignature | X509KeyUsageFlags.NonRepudiation | X509KeyUsageFlags.KeyEncipherment, true));
         using var cert = req.CreateSelfSigned(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddDays(30));
         // exporta e reimporta para que a chave fique utilizável pelo CMS também no Windows
-        return new X509Certificate2(cert.Export(X509ContentType.Pfx, "x"), "x", X509KeyStorageFlags.Exportable);
+        return X509CertificateLoader.LoadPkcs12(cert.Export(X509ContentType.Pfx, "x"), "x", X509KeyStorageFlags.Exportable);
     }
 
     static readonly byte[] Original = RandomNumberGenerator.GetBytes(100_000);
@@ -29,7 +29,7 @@ public class CmsCifraTestes
     {
         using var titular = Laboratorio("titular");
         using var contingencia = Laboratorio("contingencia");
-        var publicos = new[] { titular, contingencia }.Select(c => new X509Certificate2(c.RawData)).ToList();
+        var publicos = new[] { titular, contingencia }.Select(c => X509CertificateLoader.LoadCertificate(c.RawData)).ToList();
 
         var p7m = CmsCifra.Cifrar(Original, publicos, preenchimento);
 
@@ -49,10 +49,10 @@ public class CmsCifraTestes
     public void DecifraComRsaQueNaoExpoeAChave(PreenchimentoRsa preenchimento)
     {
         using var titular = Laboratorio("titular");
-        var p7m = CmsCifra.Cifrar(Original, new[] { new X509Certificate2(titular.RawData) }, preenchimento);
+        var p7m = CmsCifra.Cifrar(Original, new[] { X509CertificateLoader.LoadCertificate(titular.RawData) }, preenchimento);
 
         using var opaca = new RsaOpaca(titular.GetRSAPrivateKey()!);
-        Assert.Equal(Original, CmsCifra.Decifrar(p7m, new X509Certificate2(titular.RawData), opaca));
+        Assert.Equal(Original, CmsCifra.Decifrar(p7m, X509CertificateLoader.LoadCertificate(titular.RawData), opaca));
         Assert.Equal(1, opaca.Chamadas);
     }
 
@@ -61,16 +61,16 @@ public class CmsCifraTestes
     {
         using var titular = Laboratorio("titular");
         using var outro = Laboratorio("outro");
-        var p7m = CmsCifra.Cifrar(Original, new[] { new X509Certificate2(titular.RawData) });
+        var p7m = CmsCifra.Cifrar(Original, new[] { X509CertificateLoader.LoadCertificate(titular.RawData) });
         Assert.ThrowsAny<CryptographicException>(() =>
-            CmsCifra.Decifrar(p7m, new X509Certificate2(outro.RawData), outro.GetRSAPrivateKey()!));
+            CmsCifra.Decifrar(p7m, X509CertificateLoader.LoadCertificate(outro.RawData), outro.GetRSAPrivateKey()!));
     }
 
     [Fact]
     public void LePem()
     {
         using var titular = Laboratorio("titular");
-        var der = CmsCifra.Cifrar(Original, new[] { new X509Certificate2(titular.RawData) });
+        var der = CmsCifra.Cifrar(Original, new[] { X509CertificateLoader.LoadCertificate(titular.RawData) });
         var pem = System.Text.Encoding.ASCII.GetBytes(PemEncoding.WriteString("CMS", der));
         Assert.Equal(der, CmsCifra.DerOuPem(pem));
     }
@@ -94,14 +94,14 @@ public class CmsCifraTestes
     {
         if (!OperatingSystem.IsWindows()) return;
         using var temp = Laboratorio("repositorio");
-        using var cert = new X509Certificate2(temp.Export(X509ContentType.Pfx, "x"), "x",
+        using var cert = X509CertificateLoader.LoadPkcs12(temp.Export(X509ContentType.Pfx, "x"), "x",
             X509KeyStorageFlags.PersistKeySet | X509KeyStorageFlags.UserKeySet);
         using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
         store.Open(OpenFlags.ReadWrite);
         store.Add(cert);
         try
         {
-            var p7m = CmsCifra.Cifrar(Original, new[] { new X509Certificate2(cert.RawData) });
+            var p7m = CmsCifra.Cifrar(Original, new[] { X509CertificateLoader.LoadCertificate(cert.RawData) });
             Assert.Equal(Original, CmsCifra.Decifrar(p7m));
             Assert.Contains(Repositorio.Pessoais(), c => c.Thumbprint == cert.Thumbprint);
         }

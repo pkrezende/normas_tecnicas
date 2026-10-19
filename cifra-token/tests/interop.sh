@@ -4,6 +4,7 @@
 # Uso: tests/interop.sh CAMINHO_DO_cifratoken   (ex.: "dotnet run --project src/CifraToken.Cli --")
 set -euo pipefail
 CLI=${1:?informe o comando do cifratoken}
+DIR=$(cd "$(dirname "$0")" && pwd)
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 cd "$T"
 
@@ -59,7 +60,41 @@ CIFRATOKEN_SENHA='Frase senha de Teste 2026!' $CLI decifrar-senha -i t.enc -o t.
 if CIFRATOKEN_SENHA=errada $CLI decifrar-senha -i t.enc -o x.bin >/dev/null 2>&1; then echo "FALHOU: aceitou senha errada"; exit 1; fi
 ok "senha .enc (openssl enc / Quimera) nos dois sentidos"
 
-# 8. token simulado (SoftHSM) por PKCS#11: a chave fica no "token" e não sai dele
+# 8. assinatura CAdES com política ICP-Brasil e carimbo do tempo de uma ACT de laboratório
+openssl req -x509 -newkey rsa:2048 -nodes -keyout tsa.key -out tsa.pem -days 30 -subj "/CN=ACT de laboratorio" \
+  -addext "extendedKeyUsage=critical,timeStamping" -addext "keyUsage=critical,digitalSignature" 2>/dev/null
+cat > tsa.cnf <<CNF
+[ tsa ]
+default_tsa = tsa_config
+[ tsa_config ]
+serial = $T/tsaserial
+default_policy = 1.2.3.4.1
+signer_digest = sha256
+other_policies = 2.16.76.1.6.15
+digests = sha256, sha512
+accuracy = secs:1
+ordering = no
+tsa_name = no
+ess_cert_id_chain = no
+ess_cert_id_alg = sha256
+CNF
+echo 01 > tsaserial
+PORTA=$((20000 + RANDOM % 20000))
+python3 "$DIR/act-local.py" "$T" $PORTA & ACT_PID=$!
+trap 'kill $ACT_PID 2>/dev/null; rm -rf "$T"' EXIT
+sleep 1
+POL="$DIR/CifraToken.Testes/dados/PA_AD_RT_v2_3.der"
+CIFRATOKEN_SENHA=teste123 $CLI assinar -i original.bin -o sig.p7s --pfx titular.pfx --politica "$POL" --act "http://127.0.0.1:$PORTA/" >/dev/null
+openssl cms -verify -binary -inform DER -in sig.p7s -content original.bin -noverify -out /dev/null 2>/dev/null
+openssl cms -cmsout -print -inform DER -in sig.p7s > sig.txt
+grep -q "2.16.76.1.7.1.2" sig.txt && grep -q "id-smime-aa-signingCertificateV2" sig.txt && grep -q "id-smime-aa-timeStampToken" sig.txt
+$CLI verificar -i original.bin -s sig.p7s | grep -q "Carimbo do tempo:.*íntegro"
+cp original.bin alterado.bin; printf 'x' >> alterado.bin
+if $CLI verificar -i alterado.bin -s sig.p7s >/dev/null; then echo "FALHOU: assinatura aceitou arquivo alterado"; exit 1; fi
+if CIFRATOKEN_SENHA=teste123 $CLI assinar -i original.bin -o x.p7s --pfx titular.pfx --politica "$POL" >/dev/null 2>&1; then echo "FALHOU: AD-RT sem ACT"; exit 1; fi
+ok "assinatura CAdES AD-RT com carimbo do tempo (openssl cms -verify, atributos, arquivo alterado recusado)"
+
+# 9. token simulado (SoftHSM) por PKCS#11: a chave fica no "token" e não sai dele
 SOFTHSM=$(ls /usr/lib/softhsm/libsofthsm2.so /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so 2>/dev/null | head -1 || true)
 if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
   mkdir tokens
@@ -77,7 +112,9 @@ if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
   openssl cms -decrypt -binary -inform DER -in h.p7m -recip titular.pem -inkey titular.key -out h.bin; igual h.bin
   if CIFRATOKEN_PIN=000000 $CLI decifrar -i a.p7m -o x.bin --pkcs11 "$SOFTHSM" 2>err.txt >/dev/null; then echo "FALHOU: aceitou PIN errado"; exit 1; fi
   grep -q "PIN incorreto" err.txt
-  ok "token PKCS#11 (SoftHSM): listar, decifrar PKCS#1 e OAEP, cifrar --do-token, PIN errado"
+  CIFRATOKEN_PIN=123456 $CLI assinar -i original.bin -o tok.p7s --pkcs11 "$SOFTHSM" --politica "$DIR/CifraToken.Testes/dados/PA_AD_RB_v2_3.der" >/dev/null 2>&1
+  openssl cms -verify -binary -inform DER -in tok.p7s -content original.bin -noverify -out /dev/null 2>/dev/null
+  ok "token PKCS#11 (SoftHSM): listar, decifrar PKCS#1 e OAEP, cifrar --do-token, assinar, PIN errado"
 else
   echo "--  token PKCS#11 não testado (falta softhsm2 ou opensc)"
 fi
