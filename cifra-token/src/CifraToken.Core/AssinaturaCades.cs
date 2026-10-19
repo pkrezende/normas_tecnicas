@@ -30,7 +30,7 @@ public static class AssinaturaCades
     /// </summary>
     public static async Task<byte[]> Assinar(byte[] conteudo, X509Certificate2 certificado, RSA? chave,
         PoliticaIcp? politica, string? urlAct, HttpClient? http, IEnumerable<X509Certificate2>? cadeia = null,
-        string? politicaAct = null, bool silencioso = true, CancellationToken ct = default)
+        string? politicaAct = null, bool silencioso = true, bool incluirHora = true, CancellationToken ct = default)
     {
         if (politica?.ExigeCarimbo == true && string.IsNullOrWhiteSpace(urlAct))
             throw new ArgumentException("A política AD-RT exige carimbo do tempo: configure o endereço da ACT.");
@@ -47,7 +47,7 @@ public static class AssinaturaCades
         signer.SignedAttributes.Add(new AsnEncodedData(OidSigningCertificateV2, SigningCertificateV2(certificado)));
         if (politica is not null)
             signer.SignedAttributes.Add(new AsnEncodedData(OidSigPolicyId, SigPolicyId(politica)));
-        else
+        else if (incluirHora) // no PAdES a hora vai no dicionário da assinatura (/M), não no CMS
             signer.SignedAttributes.Add(new Pkcs9SigningTime(DateTime.UtcNow));
 
         cms.ComputeSignature(signer, silencioso);

@@ -20,16 +20,18 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
-      - run: sudo apt-get update && sudo apt-get install -y softhsm2 opensc
+      - run: sudo apt-get update && sudo apt-get install -y softhsm2 opensc poppler-utils
       - run: dotnet test tests/CifraToken.Testes
       - run: dotnet build src/CifraToken.Cli -c Release
       - run: tests/interop.sh "$PWD/src/CifraToken.Cli/bin/Release/net10.0/cifratoken"
-      - name: Baixar e conferir as Políticas de Assinatura v2.4 do ITI
+      - name: Baixar e conferir as Políticas de Assinatura do ITI (CAdES v2.4 e PAdES v1.3)
         continue-on-error: true  # depende do site do ITI estar no ar
         run: |
           CLI=src/CifraToken.Cli/bin/Release/net10.0/cifratoken
           $CLI politica AD-RB | tee rb.txt && grep -q "2.16.76.1.7.1.1.2.4" rb.txt
           $CLI politica AD-RT | tee rt.txt && grep -q "2.16.76.1.7.1.2.2.4" rt.txt
+          $CLI politica "PAdES AD-RB" | tee prb.txt && grep -q "2.16.76.1.7.1.11.1.3" prb.txt
+          $CLI politica "PAdES AD-RT" | tee prt.txt && grep -q "2.16.76.1.7.1.12.1.3" prt.txt
       - name: Gerar executáveis para Linux
         run: |
           out=publicado/CifraToken-linux-x64
@@ -107,7 +109,7 @@ jobs:
           foreach ($rid in "win-x64", "win-x86") {
             Compress-Archive -Path "publicado/CifraToken-$rid/*" -DestinationPath "publicado/CifraToken-$rid.zip"
           }
-          $notas = "Executáveis do CifraToken $versao (não precisam de instalação): cifrar, decifrar, assinar (CAdES ICP-Brasil com carimbo do tempo) e verificar.`n`n" +
+          $notas = "Executáveis do CifraToken $versao (não precisam de instalação): cifrar, decifrar, assinar (CAdES e PDF/PAdES ICP-Brasil com carimbo do tempo, estampa de carimbo e logo) e verificar.`n`n" +
                    "- CifraToken-win-x64.zip: Windows 64 bits (o normal).`n" +
                    "- CifraToken-win-x86.zip: Windows, se o driver do token só existir em 32 bits.`n" +
                    "- CifraToken-linux-x64.tar.gz: Linux 64 bits.`n`n" +

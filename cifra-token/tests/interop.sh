@@ -94,7 +94,32 @@ if $CLI verificar -i alterado.bin -s sig.p7s >/dev/null; then echo "FALHOU: assi
 if CIFRATOKEN_SENHA=teste123 $CLI assinar -i original.bin -o x.p7s --pfx titular.pfx --politica "$POL" >/dev/null 2>&1; then echo "FALHOU: AD-RT sem ACT"; exit 1; fi
 ok "assinatura CAdES AD-RT com carimbo do tempo (openssl cms -verify, atributos, arquivo alterado recusado)"
 
-# 9. token simulado (SoftHSM) por PKCS#11: a chave fica no "token" e não sai dele
+# 9. assinatura PAdES dentro do PDF, com estampa de carimbo, conferida pelo pdfsig (poppler)
+if command -v pdfsig >/dev/null; then
+  python3 - <<'PY'
+objs = [b"<</Type/Catalog/Pages 2 0 R>>", b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+        b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]/Contents 4 0 R>>",
+        b"<</Length 44>>stream\nBT /F1 12 Tf 72 720 Td (Documento) Tj ET\nendstream"]
+out, offs = bytearray(b"%PDF-1.4\n"), []
+for i, o in enumerate(objs, 1):
+    offs.append(len(out)); out += b"%d 0 obj\n" % i + o + b"\nendobj\n"
+x = len(out)
+out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d 00000 n \n" % o for o in offs)
+out += b"trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, x)
+open("doc.pdf", "wb").write(out)
+PY
+  CIFRATOKEN_SENHA=teste123 $CLI assinar-pdf -i doc.pdf -o doc-assinado.pdf --pfx titular.pfx --act "http://127.0.0.1:$PORTA/" --estampa carimbo >/dev/null
+  pdfsig doc-assinado.pdf > pdfsig.txt 2>&1 || true
+  grep -q "Signature is Valid" pdfsig.txt && grep -q "ETSI.CAdES.detached" pdfsig.txt && grep -q "Total document signed" pdfsig.txt
+  $CLI verificar -i doc-assinado.pdf | grep -q "Carimbo do tempo:.*íntegro"
+  printf 'x' | dd of=doc-assinado.pdf bs=1 seek=20 conv=notrunc 2>/dev/null
+  if $CLI verificar -i doc-assinado.pdf >/dev/null; then echo "FALHOU: PDF alterado aceito"; exit 1; fi
+  ok "assinatura PAdES no PDF com carimbo do tempo e estampa (pdfsig: válida, ETSI.CAdES.detached; PDF alterado recusado)"
+else
+  echo "--  PAdES não testado com pdfsig (falta poppler-utils)"
+fi
+
+# 10. token simulado (SoftHSM) por PKCS#11: a chave fica no "token" e não sai dele
 SOFTHSM=$(ls /usr/lib/softhsm/libsofthsm2.so /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so 2>/dev/null | head -1 || true)
 if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
   mkdir tokens

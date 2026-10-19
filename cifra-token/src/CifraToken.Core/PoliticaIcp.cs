@@ -10,17 +10,22 @@ namespace CifraToken.Core;
 /// </summary>
 public sealed record PoliticaIcp(string Nome, string Oid, string Url, HashAlgorithmName AlgoritmoResumo, byte[] Resumo)
 {
-    /// <summary>Políticas CAdES vigentes conferidas no repositório do ITI em 19/10/2026 (ciclo 12/06/2025 a 22/10/2037).</summary>
+    /// <summary>
+    /// Políticas vigentes do DOC-ICP-15.03: CAdES v2.4 (IN ITI nº 33/2025, de 12/06/2025 a 22/10/2037) e
+    /// PAdES v1.3 (IN ITI nº 34/2025, OIDs 2.16.76.1.7.1.11.1.3 e 2.16.76.1.7.1.12.1.3, de 23/07/2025 a 22/10/2037).
+    /// </summary>
     public static readonly (string Nome, string Url)[] Conhecidas =
     {
         ("AD-RB v2.4 (referência básica)", "http://politicas.icpbrasil.gov.br/PA_AD_RB_v2_4.der"),
         ("AD-RT v2.4 (referência de tempo: exige carimbo do tempo)", "http://politicas.icpbrasil.gov.br/PA_AD_RT_v2_4.der"),
+        ("PAdES AD-RB v1.3 (referência básica, PDF)", "http://politicas.icpbrasil.gov.br/PA_PAdES_AD_RB_v1_3.der"),
+        ("PAdES AD-RT v1.3 (referência de tempo, PDF)", "http://politicas.icpbrasil.gov.br/PA_PAdES_AD_RT_v1_3.der"),
     };
 
     public static string PastaCache => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CifraToken", "politicas");
 
-    /// <summary>"AD-RB", "AD-RT", um caminho de arquivo .der ou um URL.</summary>
+    /// <summary>"AD-RB", "AD-RT", "PAdES AD-RB", "PAdES AD-RT", um caminho de arquivo .der ou um URL.</summary>
     public static async Task<PoliticaIcp> Resolver(string nomeOuCaminho, HttpClient http, CancellationToken ct = default)
     {
         if (File.Exists(nomeOuCaminho))
@@ -29,21 +34,22 @@ public sealed record PoliticaIcp(string Nome, string Oid, string Url, HashAlgori
         if (conhecida.Url is not null) return await Obter(conhecida.Nome, conhecida.Url, PastaCache, http, ct);
         if (Uri.TryCreate(nomeOuCaminho, UriKind.Absolute, out var u) && u.Scheme.StartsWith("http"))
             return await Obter(Path.GetFileName(u.LocalPath), nomeOuCaminho, PastaCache, http, ct);
-        throw new ArgumentException($"Política desconhecida: {nomeOuCaminho}. Use AD-RB, AD-RT ou o caminho de um arquivo .der.");
+        throw new ArgumentException($"Política desconhecida: {nomeOuCaminho}. Use AD-RB, AD-RT, PAdES AD-RB, PAdES AD-RT ou o caminho de um arquivo .der.");
     }
 
-    /// <summary>AD-RT (OID 2.16.76.1.7.1.2.x no CAdES) exige o carimbo do tempo da assinatura.</summary>
+    /// <summary>AD-RT (OID 2.16.76.1.7.1.2.x no CAdES, 2.16.76.1.7.1.12.x no PAdES) exige o carimbo do tempo da assinatura.</summary>
     public bool ExigeCarimbo => Oid.StartsWith("2.16.76.1.7.1.2.", StringComparison.Ordinal)
+                                || Oid.StartsWith("2.16.76.1.7.1.12.", StringComparison.Ordinal)
                                 || Url.Contains("_AD_RT", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Lê o arquivo .der da política e confere o resumo interno (signPolicyHash) com o calculado.</summary>
-    /// <summary>"AD-RB v2.4 (2.16.76.1.7.1.1.2.4)" para os OIDs CAdES da ICP-Brasil; senão, o próprio OID.</summary>
+    /// <summary>"AD-RB v2.4 da ICP-Brasil (2.16.76.1.7.1.1.2.4)" para os OIDs CAdES e PAdES da ICP-Brasil; senão, o próprio OID.</summary>
     public static string Descrever(string oid)
     {
-        var tipo = oid.StartsWith("2.16.76.1.7.1.1.", StringComparison.Ordinal) ? "AD-RB"
-                 : oid.StartsWith("2.16.76.1.7.1.2.", StringComparison.Ordinal) ? "AD-RT" : null;
         var arcos = oid.Split('.');
-        return tipo is null || arcos.Length != 9 ? oid : $"{tipo} v{arcos[7]}.{arcos[8]} da ICP-Brasil ({oid})";
+        if (arcos.Length != 9 || !oid.StartsWith("2.16.76.1.7.1.", StringComparison.Ordinal)) return oid;
+        var tipo = arcos[6] switch { "1" => "AD-RB", "2" => "AD-RT", "11" => "PAdES AD-RB", "12" => "PAdES AD-RT", _ => null };
+        return tipo is null ? oid : $"{tipo} v{arcos[7]}.{arcos[8]} da ICP-Brasil ({oid})";
     }
 
     public static PoliticaIcp Ler(byte[] der, string nome, string url)

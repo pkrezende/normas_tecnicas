@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>CifraToken</AssemblyName>
     <Product>CifraToken</Product>
-    <Version>0.3.0</Version>
+    <Version>0.4.0</Version>
     <Description>Cifra, decifra e assina arquivos com certificado ICP-Brasil em token (algoritmos abertos)</Description>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <ApplicationManifest>app.manifest</ApplicationManifest>

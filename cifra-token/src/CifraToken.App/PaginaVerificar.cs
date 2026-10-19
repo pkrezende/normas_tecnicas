@@ -15,7 +15,7 @@ sealed class PaginaVerificar : PaginaArquivos
 
     protected override (string Nome, string[] Padroes)[] Filtros => new[]
     {
-        ("Assinaturas (*.p7s)", new[] { "*.p7s" }),
+        ("Assinaturas e PDFs (*.p7s, *.pdf)", new[] { "*.p7s", "*.pdf" }),
         ("Todos os arquivos", new[] { "*" }),
     };
 
@@ -36,7 +36,7 @@ sealed class PaginaVerificar : PaginaArquivos
         {
             TextWrapping = TextWrapping.Wrap,
             Text = Arquivos.Count == 0
-                ? "Adicione os arquivos assinados ou as assinaturas (.p7s). O original e o .p7s precisam estar na mesma pasta, com o mesmo nome (\"contrato.pdf\" e \"contrato.pdf.p7s\"). Depois clique em Ok."
+                ? "Adicione os PDFs assinados, os arquivos assinados ou as assinaturas (.p7s). O original e o .p7s precisam estar na mesma pasta, com o mesmo nome (\"contrato.pdf\" e \"contrato.pdf.p7s\"). Um PDF sem .p7s ao lado tem as assinaturas internas conferidas. Depois clique em Ok."
                 : $"{Arquivos.Count} arquivo(s). Clique em Ok para verificar.",
         });
     }
@@ -48,6 +48,35 @@ sealed class PaginaVerificar : PaginaArquivos
         int validas = 0, total = 0;
         foreach (var (original, assinatura) in Arquivos.Select(Par).Distinct().ToList())
         {
+            // PDF sem .p7s ao lado: assinaturas dentro do próprio arquivo (PAdES)
+            if (original.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) && !File.Exists(assinatura) && File.Exists(original))
+            {
+                List<VerificacaoPdf>? internas = null;
+                string? problema = null;
+                try
+                {
+                    var bytes = await File.ReadAllBytesAsync(original);
+                    internas = await Task.Run(() => AssinaturaPdf.Verificar(bytes));
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { problema = e.Message; }
+                if (internas is null || internas.Count == 0)
+                {
+                    total++;
+                    resultados.Children.Add(Cartao(Path.GetFileName(original), null, problema ?? "O PDF não tem assinatura digital.", false));
+                    continue;
+                }
+                foreach (var a in internas)
+                {
+                    total++;
+                    var ok = a.Assinatura is { Integra: true } && a.Assinatura.CarimboValido != false;
+                    if (ok) validas++;
+                    var nome = Path.GetFileName(original) + (internas.Count > 1 ? $" (assinatura {a.Numero})" : "");
+                    resultados.Children.Add(Cartao(nome, a.Assinatura, null, ok,
+                        (a.CobreDocumentoInteiro ? "cobre o documento inteiro" : "ATENÇÃO: o PDF recebeu alterações depois desta assinatura") +
+                        (a.Motivo is null ? "" : $"; motivo: {a.Motivo}")));
+                }
+                continue;
+            }
             total++;
             Verificacao? v = null;
             string? falta = !File.Exists(original) ? $"Não encontrei o arquivo original \"{Path.GetFileName(original)}\" na mesma pasta."
@@ -73,7 +102,7 @@ sealed class PaginaVerificar : PaginaArquivos
             erro: validas != total);
     }
 
-    static Border Cartao(string nome, Verificacao? v, string? erro, bool boa)
+    static Border Cartao(string nome, Verificacao? v, string? erro, bool boa, string? pdf = null)
     {
         var linhas = new StackPanel { Spacing = 2 };
         var titulo = new StackPanel { Orientation = Avalonia.Layout.Orientation.Horizontal, Spacing = 6 };
@@ -94,6 +123,7 @@ sealed class PaginaVerificar : PaginaArquivos
             Linha("Política", v.Politica is { } oid ? PoliticaIcp.Descrever(oid) : "nenhuma (não é assinatura no padrão ICP-Brasil)");
             Linha("Carimbo do tempo", v.Carimbo is null ? "não tem" :
                 $"{v.Carimbo.Value.ToLocalTime():dd/MM/yyyy HH:mm:ss} (hora local) por {v.Act}, {(v.CarimboValido == true ? "íntegro" : "INVÁLIDO")}");
+            Linha("PDF", pdf);
             Linha("Cadeia", v.CadeiaStatus);
         }
         return new Border

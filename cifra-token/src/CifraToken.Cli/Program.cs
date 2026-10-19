@@ -10,7 +10,11 @@ Uso:
   cifratoken decifrar-senha -i ARQUIVO.enc -o SAIDA
   cifratoken assinar -i ARQUIVO [-o ARQUIVO.p7s] (--pfx MEU.pfx | --pkcs11 [BIBLIOTECA] | -t IMPRESSAO_DIGITAL)
                     [--politica AD-RB|AD-RT|politica.der] [--act URL] [--act-politica OID]
-  cifratoken verificar -i ARQUIVO [-s ARQUIVO.p7s]
+  cifratoken assinar-pdf -i DOC.pdf [-o DOC-assinado.pdf] (--pfx|--pkcs11|-t ...) [--politica AD-RB|AD-RT] [--act URL]
+                    [--estampa carimbo|assinatura|nenhuma] [--logo LOGO.png] [--pagina N|ultima]
+                    [--posicao inferior-direito|inferior-esquerdo|superior-direito|superior-esquerdo|centro]
+                    [--motivo TEXTO] [--local TEXTO]
+  cifratoken verificar -i ARQUIVO [-s ARQUIVO.p7s]   (um PDF sem .p7s ao lado: confere as assinaturas internas)
   cifratoken politica AD-RB|AD-RT|politica.der
   cifratoken destinatarios -i ARQUIVO.p7m
   cifratoken listar [--pkcs11 [BIBLIOTECA]]
@@ -26,6 +30,8 @@ Uso:
   assinar: assinatura destacada CAdES (.p7s). --politica inclui a Política de Assinatura ICP-Brasil
          (DOC-ICP-15.03), baixada do ITI; AD-RT exige --act (carimbo do tempo RFC 3161).
          ACT Defesa: https://sct.acdefesa.mil.br/timestamp (só nas redes cadastradas do MD e das Forças).
+  assinar-pdf: assinatura PAdES dentro do PDF (políticas PAdES v1.3 da ICP-Brasil) com estampa visível:
+         "carimbo" (carimbo de tinta, à moda antiga) ou "assinatura" (quadro), com o logo opcional (PNG/JPEG).
   Sem --pfx, a chave é procurada no repositório "Pessoal" (onde o middleware do token
   registra o certificado) e o middleware pede o PIN.
 """;
@@ -119,12 +125,15 @@ try
             Console.WriteLine($"{pol.Nome}\nOID: {pol.Oid}\nURL: {pol.Url}\nResumo ({pol.AlgoritmoResumo.Name}): {Convert.ToHexString(pol.Resumo)}");
             return 0;
         }
-        case "assinar":
+        case "assinar" or "assinar-pdf":
         {
+            var pdf = args[0] == "assinar-pdf";
             var entrada = Obrigatoria("-i");
-            var saida = Opcao("-o") ?? entrada + ".p7s";
+            var saida = Opcao("-o") ?? (pdf ? Path.ChangeExtension(entrada, null) + "-assinado.pdf" : entrada + ".p7s");
             using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-            var pol = Opcao("--politica") is { } np ? await PoliticaIcp.Resolver(np, http) : null;
+            var nomePolitica = Opcao("--politica");
+            if (pdf && nomePolitica is "AD-RB" or "AD-RT") nomePolitica = "PAdES " + nomePolitica;
+            var pol = nomePolitica is { } np ? await PoliticaIcp.Resolver(np, http) : null;
             var act = Opcao("--act");
             X509Certificate2 cert;
             RSA? chave = null;
@@ -155,8 +164,29 @@ try
                 }
                 else cert = Repositorio.PorImpressao(Obrigatoria("-t"));
 
-                var p7s = await AssinaturaCades.Assinar(File.ReadAllBytes(entrada), cert, chave, pol, act, http, cadeia, Opcao("--act-politica"));
-                File.WriteAllBytes(saida, p7s);
+                var dados = File.ReadAllBytes(entrada);
+                byte[] resultado;
+                if (pdf)
+                {
+                    var estilo = (Opcao("--estampa") ?? "carimbo") switch
+                    {
+                        "carimbo" => EstiloEstampa.Carimbo, "assinatura" => EstiloEstampa.Assinatura, "nenhuma" => EstiloEstampa.Nenhuma,
+                        var e => throw new ArgumentException($"Estampa desconhecida: {e}. Use carimbo, assinatura ou nenhuma."),
+                    };
+                    var posicao = (Opcao("--posicao") ?? "inferior-direito") switch
+                    {
+                        "inferior-direito" => PosicaoEstampa.InferiorDireito, "inferior-esquerdo" => PosicaoEstampa.InferiorEsquerdo,
+                        "superior-direito" => PosicaoEstampa.SuperiorDireito, "superior-esquerdo" => PosicaoEstampa.SuperiorEsquerdo,
+                        "centro" => PosicaoEstampa.Centro,
+                        var e => throw new ArgumentException($"Posição desconhecida: {e}."),
+                    };
+                    var pagina = Opcao("--pagina") is { } pg && pg != "ultima" ? int.Parse(pg) : 0;
+                    var logo = Opcao("--logo") is { } lg ? File.ReadAllBytes(lg) : null;
+                    resultado = await AssinaturaPdf.Assinar(dados, cert, chave, pol, act, http,
+                        new Estampa(estilo, pagina, posicao, logo, Opcao("--motivo"), Opcao("--local")), cadeia, Opcao("--act-politica"));
+                }
+                else resultado = await AssinaturaCades.Assinar(dados, cert, chave, pol, act, http, cadeia, Opcao("--act-politica"));
+                File.WriteAllBytes(saida, resultado);
                 Console.WriteLine($"Assinado: {saida}" + (pol is null ? "" : $" (política {pol.Oid})") + (act is null ? "" : " com carimbo do tempo"));
                 return 0;
             }
@@ -169,7 +199,27 @@ try
         case "verificar":
         {
             var entrada = Obrigatoria("-i");
-            var v = AssinaturaCades.Verificar(File.ReadAllBytes(entrada), File.ReadAllBytes(Opcao("-s") ?? entrada + ".p7s"));
+            var bytes = File.ReadAllBytes(entrada);
+            if (Opcao("-s") is null && AssinaturaPdf.EhPdf(bytes) && !File.Exists(entrada + ".p7s"))
+            {
+                var todas = AssinaturaPdf.Verificar(bytes);
+                if (todas.Count == 0) { Console.WriteLine("O PDF não tem assinatura digital."); return 1; }
+                var ok = true;
+                foreach (var a in todas)
+                {
+                    var s = a.Assinatura;
+                    Console.WriteLine($"Assinatura {a.Numero}: " + (s.Integra ? "ÍNTEGRA" : "INVÁLIDA" + (s.Erro is null ? "" : ": " + s.Erro)));
+                    Console.WriteLine($"  Signatário: {s.Signatario}");
+                    if (s.Politica is not null) Console.WriteLine($"  Política: {PoliticaIcp.Descrever(s.Politica)}");
+                    if (s.Carimbo is not null)
+                        Console.WriteLine($"  Carimbo do tempo: {s.Carimbo:dd/MM/yyyy HH:mm:ss} UTC por {s.Act} ({(s.CarimboValido == true ? "íntegro" : "INVÁLIDO")})");
+                    Console.WriteLine(a.CobreDocumentoInteiro ? "  Cobre o documento inteiro." : "  Atenção: o PDF recebeu alterações depois desta assinatura.");
+                    if (s.CadeiaStatus is not null) Console.WriteLine("  " + s.CadeiaStatus);
+                    ok &= s.Integra && s.CarimboValido != false;
+                }
+                return ok ? 0 : 1;
+            }
+            var v = AssinaturaCades.Verificar(bytes, File.ReadAllBytes(Opcao("-s") ?? entrada + ".p7s"));
             Console.WriteLine(v.Integra ? "ASSINATURA ÍNTEGRA" : "ASSINATURA INVÁLIDA" + (v.Erro is null ? "" : ": " + v.Erro));
             Console.WriteLine($"Signatário: {v.Signatario}");
             if (v.Politica is not null) Console.WriteLine($"Política: {PoliticaIcp.Descrever(v.Politica)}");

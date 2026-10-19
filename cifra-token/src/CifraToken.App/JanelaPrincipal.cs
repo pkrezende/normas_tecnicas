@@ -185,7 +185,7 @@ sealed class JanelaPrincipal : Window
                     {
                         Bloco(Icones.Cadeado, "Cifrar Arquivos", "Para destinatários (certificado) ou com senha", () => cifrar),
                         Bloco(Icones.CadeadoAberto, "Decifrar Arquivos", "Com o seu token, .pfx ou a senha", () => decifrar),
-                        Bloco(Icones.Caneta, "Assinar Arquivos", "Assinatura ICP-Brasil (.p7s) com carimbo do tempo", () => assinar),
+                        Bloco(Icones.Caneta, "Assinar Arquivos", "Assinatura ICP-Brasil (.p7s ou dentro do PDF) com carimbo do tempo", () => assinar),
                         Bloco(Icones.Selo, "Verificar Assinaturas", "Confere signatário, política e carimbo do tempo", () => verificar),
                         Bloco(Icones.Pessoas, "Contatos e Certificados", "Certificados de quem pode receber arquivos cifrados", () => contatos),
                     },
@@ -221,8 +221,8 @@ sealed class JanelaPrincipal : Window
         "Cifra, decifra e assina arquivos com certificado digital ICP-Brasil em token, .pfx ou senha.\n\n" +
         "Para destinatários: CMS EnvelopedData (RFC 5652), AES-256-CBC com chave de sessão em RSA (PKCS#1 v1.5 ou OAEP).\n" +
         "Com senha: formato do openssl enc / .enc do Quimera (AES-256-CBC, PBKDF2-HMAC-SHA512, 1.000.000 de iterações).\n" +
-        "Assinatura: CAdES destacada (.p7s) com SHA-256, políticas AD-RB e AD-RT da ICP-Brasil (DOC-ICP-15.03) e carimbo do tempo RFC 3161.\n\n" +
-        "Bibliotecas: .NET, Avalonia (MIT), Pkcs11Interop (Apache 2.0).\n" +
+        "Assinatura: CAdES destacada (.p7s) e PAdES no PDF, com SHA-256, políticas AD-RB e AD-RT da ICP-Brasil (DOC-ICP-15.03) e carimbo do tempo RFC 3161.\n\n" +
+        "Bibliotecas: .NET, Avalonia (MIT), Pkcs11Interop (Apache 2.0), PDFsharp 6.2.4 (MIT). Fontes Liberation (SIL OFL 1.1).\n" +
         "Ferramenta consultiva. Não use para informação classificada (Decreto 7.845/2012).",
         "Sobre o CifraToken");
 }

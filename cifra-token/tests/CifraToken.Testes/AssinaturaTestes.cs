@@ -11,7 +11,7 @@ public class AssinaturaTestes
 {
     static string Dados(string nome) => Path.Combine(AppContext.BaseDirectory, "dados", nome);
 
-    static X509Certificate2 Signatario()
+    internal static X509Certificate2 Signatario()
     {
         using var rsa = RSA.Create(2048);
         var req = new CertificateRequest("CN=Signatario de Teste, O=ICP-Brasil, C=BR", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -20,13 +20,14 @@ public class AssinaturaTestes
         return X509CertificateLoader.LoadPkcs12(c.Export(X509ContentType.Pfx, "x"), "x", X509KeyStorageFlags.Exportable);
     }
 
-    /// <summary>Arquivo oficial da PA AD-RB v2.3 do ITI: OID e resumo interno (signPolicyHash).</summary>
     [Theory]
     [InlineData("2.16.76.1.7.1.1.2.4", "AD-RB v2.4 da ICP-Brasil (2.16.76.1.7.1.1.2.4)")]
     [InlineData("2.16.76.1.7.1.2.2.3", "AD-RT v2.3 da ICP-Brasil (2.16.76.1.7.1.2.2.3)")]
+    [InlineData("2.16.76.1.7.1.12.1.3", "PAdES AD-RT v1.3 da ICP-Brasil (2.16.76.1.7.1.12.1.3)")]
     [InlineData("1.2.3.4", "1.2.3.4")]
     public void DescrevePolitica(string oid, string esperado) => Assert.Equal(esperado, PoliticaIcp.Descrever(oid));
 
+    /// <summary>Arquivo oficial da PA AD-RB v2.3 do ITI: OID e resumo interno (signPolicyHash).</summary>
     [Fact]
     public void LePoliticaOficialAdRb()
     {

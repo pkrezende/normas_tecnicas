@@ -24,6 +24,13 @@ sealed class Configuracao
     public string UrlAct { get; set; } = CarimboTempo.UrlActDefesa;
     /// <summary>OID da política da ACT a pedir no carimbo (vazio: a ACT usa a padrão).</summary>
     public string PoliticaAct { get; set; } = "";
+    /// <summary>PDF: assinar dentro do arquivo (PAdES) com estampa visível.</summary>
+    public bool AssinarDentroDoPdf { get; set; } = true;
+    public EstiloEstampa Estampa { get; set; } = EstiloEstampa.Carimbo;
+    public PosicaoEstampa PosicaoEstampa { get; set; } = PosicaoEstampa.InferiorDireito;
+    /// <summary>0 = última página, 1 = primeira.</summary>
+    public int PaginaEstampa { get; set; }
+    public string ArquivoLogo { get; set; } = "";
 
     public static Configuracao Ler()
     {

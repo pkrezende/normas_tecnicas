@@ -12,6 +12,8 @@ arquivo .pfx ou com frase-senha. Usa só algoritmos abertos.
 - A chave privada **não sai do token**: só a chave de sessão do arquivo é decifrada dentro dele.
 - **Assina** no padrão CAdES da ICP-Brasil (`.p7s`, DOC-ICP-15.03), com as políticas AD-RB e AD-RT e
   **carimbo do tempo** RFC 3161 de uma ACT configurável (por padrão, a ACT Defesa).
+- **Assina dentro do PDF** (PAdES), com uma **estampa de carimbo** à moda antiga ou um quadro de assinatura,
+  e o **logo** da sua OM, se quiser.
 
 > Não use para informação classificada. Para isso vale a solução de criptografia de Estado definida pelo seu
 > Comando (Decreto 7.845/2012). Faça os testes com arquivos sem valor.
@@ -97,12 +99,38 @@ Adicione os arquivos, conecte a credencial (PIN e **Conectar**), escolha o certi
 
 ![Preferências de assinatura](docs/telas/preferencias-assinatura.png)
 
+## Assinar PDF com estampa e logo
+
+![Opções de PDF](docs/telas/assinar-pdf.png)
+
+Quando a lista tem PDFs, aparece o grupo **Documentos PDF**. Com "Assinar dentro do PDF" marcado, cada PDF vira
+`NOME-assinado.pdf` (o original não é alterado), com a assinatura dentro do arquivo. Ela abre no Adobe Reader e no
+Verificador do ITI. Os outros arquivos da lista continuam ganhando o `.p7s`.
+
+| Estampa | Como fica |
+|---|---|
+| **Carimbo** | ![Carimbo](docs/telas/estampa-carimbo.png) |
+| **Quadro de assinatura** | ![Quadro](docs/telas/estampa-quadro.png) |
+| Sem estampa visível | só a assinatura, vista no painel de assinaturas do leitor de PDF |
+
+- Escolha a página (última ou primeira) e a posição (cantos ou centro). O **logo** pode ser PNG ou JPEG e fica
+  guardado para as próximas vezes. O **Motivo** (por exemplo, "Aprovo") vai no campo de motivo da assinatura.
+- Políticas: **PAdES AD-RB v1.3** (OID `2.16.76.1.7.1.11.1.3`) e **PAdES AD-RT v1.3** (`2.16.76.1.7.1.12.1.3`),
+  vigentes de 23/07/2025 a 22/10/2037 (IN ITI nº 34/2025, DOC-ICP-15.03 v9.1). A escolha AD-RB/AD-RT da tela
+  vale para os dois formatos.
+- O carimbo diz **CARIMBADO** quando há carimbo do tempo e **ASSINADO** quando não há. A estampa é desenhada
+  antes da assinatura, então fica protegida por ela. A data na estampa é a do computador no momento de assinar.
+  A data oficial é a do carimbo do tempo da ACT, que a verificação mostra.
+- Um PDF **já assinado** não é assinado de novo, porque o CifraToken regrava o arquivo e isso invalidaria a
+  assinatura anterior. Para coassinar, use o `.p7s`.
+
 ## Verificar Assinaturas
 
 ![Verificar](docs/telas/verificar.png)
 
 Adicione o `.p7s` (ou o original; os dois precisam estar na mesma pasta, como `contrato.pdf` e
-`contrato.pdf.p7s`) e clique em **Ok**. Para cada arquivo aparecem: se o arquivo foi alterado depois de assinado,
+`contrato.pdf.p7s`) ou um PDF assinado, e clique em **Ok**. No PDF, todas as assinaturas internas são conferidas,
+inclusive as feitas por outros programas, e o CifraToken avisa se o PDF foi alterado depois de alguma delas. Para cada arquivo aparecem: se o arquivo foi alterado depois de assinado,
 o signatário, o certificado, a política, a data e hora do carimbo do tempo com a ACT, e a cadeia do certificado.
 A cadeia só é validada se as ACs da ICP-Brasil estiverem instaladas no computador; a revogação (LCR) ainda não é
 consultada. Para validação jurídica completa, use também o Verificador de Conformidade do ITI
@@ -121,6 +149,9 @@ cifratoken decifrar-senha -i doc.pdf.enc -o doc.pdf
 cifratoken assinar -i doc.pdf --pkcs11 --politica AD-RB          # gera doc.pdf.p7s
 cifratoken assinar -i doc.pdf --pkcs11 --politica AD-RT --act https://sct.acdefesa.mil.br/timestamp
 cifratoken verificar -i doc.pdf                                   # procura doc.pdf.p7s
+cifratoken assinar-pdf -i doc.pdf --pkcs11 --politica AD-RT --act https://sct.acdefesa.mil.br/timestamp \
+           --estampa carimbo --logo logo.png --pagina ultima --posicao inferior-direito   # gera doc-assinado.pdf
+cifratoken verificar -i doc-assinado.pdf                          # confere as assinaturas dentro do PDF
 cifratoken politica AD-RB                                         # baixa e mostra a política do ITI
 ```
 O PIN é pedido na tela (ou lido de `CIFRATOKEN_PIN`, apenas para testes automatizados).
@@ -132,6 +163,7 @@ O PIN é pedido na tela (ou lido de `CIFRATOKEN_PIN`, apenas para testes automat
 | `openssl cms` (Linux/Windows) | compatível nos dois sentidos, DER ou PEM, RSA PKCS#1 v1.5 e OAEP |
 | `openssl enc` e Quimera `.enc` (senha) | compatível nos dois sentidos (AES-256-CBC, PBKDF2-SHA512, 1.000.000 de iterações) |
 | `openssl cms -verify` (assinatura `.p7s`) | compatível; atributos CAdES conferidos com `openssl cms -cmsout -print` |
+| `pdfsig` (poppler) e leitores de PDF | assinatura PAdES válida, tipo `ETSI.CAdES.detached`, documento inteiro coberto |
 | Quimera (Marinha) `.acq` | **não** compatível: formato próprio do Quimera para destinatários |
 
 ## Limites conhecidos
@@ -141,8 +173,9 @@ O PIN é pedido na tela (ou lido de `CIFRATOKEN_PIN`, apenas para testes automat
 - Não apaga o original com segurança; faça isso pelo procedimento do seu setor, se for o caso.
 - A verificação não consulta LCR nem OCSP e não confere as regras completas da política (por exemplo, a
   validade do certificado na data do carimbo). Ela confere integridade, signatário, política e carimbo.
-- Só RSA (os certificados da AC Defesa e dos tokens comuns são RSA). Assinatura em PDF (PAdES) com carimbo
-  visual é a próxima etapa.
+- Só RSA (os certificados da AC Defesa e dos tokens comuns são RSA).
+- PDF: não coassina um PDF já assinado, não abre PDF protegido por senha, e páginas giradas (paisagem por
+  rotação) podem ter a estampa no lugar errado.
 
 ## O que foi testado
 
@@ -151,6 +184,7 @@ Automaticamente, a cada alteração (GitHub Actions):
 - cifra com senha contra o `openssl enc` com os parâmetros do Quimera;
 - assinatura CAdES AD-RT com a política oficial do ITI (v2.3, para teste) e carimbo do tempo de uma ACT de
   laboratório (`openssl ts`), conferida pelo `openssl cms -verify`; arquivo alterado é recusado;
+- assinatura PAdES no PDF com estampa e carimbo do tempo, conferida pelo `pdfsig` (poppler); PDF alterado é recusado;
 - token simulado (SoftHSM) por PKCS#11: listar, decifrar, cifrar com o certificado do token, assinar, PIN errado;
 - no Windows: decifrar pelo repositório "Pessoal" e pelo caminho que o token usa.
 
@@ -160,7 +194,8 @@ cadastradas. Esses testes precisam ser feitos no seu computador.
 ## Código
 
 - `src/CifraToken.Core`: CMS (`CmsCifra.cs`), senha (`SenhaOpenSsl.cs`), assinatura CAdES (`AssinaturaCades.cs`,
-  `PoliticaIcp.cs`, `CarimboTempo.cs`), contatos, acesso ao token por PKCS#11 (`TokenPkcs11.cs`, com a
+  `PoliticaIcp.cs`, `CarimboTempo.cs`), PDF (`AssinaturaPdf.cs`, com [PDFsharp](https://www.pdfsharp.com) 6.2.4,
+  licença MIT, e as fontes Liberation, licença SIL OFL 1.1), contatos, acesso ao token por PKCS#11 (`TokenPkcs11.cs`, com a
   biblioteca [Pkcs11Interop](https://github.com/Pkcs11Interop/Pkcs11Interop)) e ao repositório do Windows.
 - `src/CifraToken.App`: janela (Avalonia, roda no Windows e no Linux).
 - `src/CifraToken.Cli`: linha de comando.
