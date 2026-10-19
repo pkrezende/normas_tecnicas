@@ -1,0 +1,69 @@
+name: CifraToken
+
+on:
+  push:
+    paths: ["cifra-token/**", ".github/workflows/cifra-token.yml"]
+  pull_request:
+    paths: ["cifra-token/**", ".github/workflows/cifra-token.yml"]
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: cifra-token
+
+jobs:
+  linux-openssl:
+    name: Compatibilidade com openssl e token simulado (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: sudo apt-get update && sudo apt-get install -y softhsm2 opensc
+      - run: dotnet test tests/CifraToken.Testes
+      - run: dotnet build src/CifraToken.Cli -c Release
+      - run: tests/interop.sh "$PWD/src/CifraToken.Cli/bin/Release/net8.0/cifratoken"
+
+  windows:
+    name: Testes e executáveis (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - run: dotnet test tests/CifraToken.Testes
+      - name: Gerar executáveis (64 e 32 bits)
+        shell: pwsh
+        run: |
+          foreach ($rid in "win-x64", "win-x86") {
+            $out = "publicado/CifraToken-$rid"
+            dotnet publish src/CifraToken.App -c Release -r $rid --self-contained true `
+              -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o $out
+            dotnet publish src/CifraToken.Cli -c Release -r $rid --self-contained true `
+              -p:PublishSingleFile=true -o $out
+            Copy-Item LEIA-ME.md $out
+            Get-ChildItem $out -Filter *.pdb | Remove-Item
+          }
+      - name: Teste de fumaça do executável de linha de comando com openssl
+        shell: bash
+        run: |
+          set -e
+          CLI=publicado/CifraToken-win-x64/cifratoken.exe
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout k.pem -out c.pem -days 2 -subj "/CN=fumaca" \
+            -addext "keyUsage=critical,digitalSignature,nonRepudiation,keyEncipherment"
+          echo "teste $(date)" > t.txt
+          $CLI cifrar -i t.txt -o t.p7m -r c.pem
+          openssl cms -decrypt -binary -inform DER -in t.p7m -recip c.pem -inkey k.pem -out t2.txt
+          cmp t.txt t2.txt
+          openssl cms -encrypt -binary -aes256 -in t.txt -outform DER -out u.p7m c.pem
+          openssl pkcs12 -export -inkey k.pem -in c.pem -out k.pfx -passout pass:x
+          CIFRATOKEN_SENHA=x $CLI decifrar -i u.p7m -o u.txt --pfx k.pfx
+          cmp t.txt u.txt
+          rm -f k.pem k.pfx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CifraToken-windows
+          path: cifra-token/publicado/
+          retention-days: 30

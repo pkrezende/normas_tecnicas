@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+# Testa a compatibilidade do cifratoken com "openssl cms" usando certificados de laboratório
+# com o mesmo Key Usage do A3 da AC Defesa (digitalSignature, nonRepudiation, keyEncipherment).
+# Uso: tests/interop.sh CAMINHO_DO_cifratoken   (ex.: "dotnet run --project src/CifraToken.Cli --")
+set -euo pipefail
+CLI=${1:?informe o comando do cifratoken}
+T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+cd "$T"
+
+lab() {
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout "$1.key" -out "$1.pem" -days 30 -subj "/CN=$1 laboratorio" \
+    -addext "keyUsage=critical,digitalSignature,nonRepudiation,keyEncipherment" \
+    -addext "extendedKeyUsage=clientAuth,emailProtection" 2>/dev/null
+  openssl pkcs12 -export -inkey "$1.key" -in "$1.pem" -out "$1.pfx" -passout pass:teste123
+}
+lab titular; lab contingencia
+head -c 300000 /dev/urandom > original.bin
+export CIFRATOKEN_SENHA=teste123
+ok() { echo "OK  $1"; }
+igual() { cmp -s original.bin "$1" || { echo "FALHOU: $1 difere do original"; exit 1; }; }
+
+# 1. cifratoken cifra para dois destinatários; openssl decifra com cada chave
+$CLI cifrar -i original.bin -o a.p7m -r titular.pem -r contingencia.pem >/dev/null
+openssl cms -decrypt -binary -inform DER -in a.p7m -recip titular.pem -inkey titular.key -out a1.bin; igual a1.bin
+openssl cms -decrypt -binary -inform DER -in a.p7m -recip contingencia.pem -inkey contingencia.key -out a2.bin; igual a2.bin
+openssl cms -cmsout -print -inform DER -in a.p7m | grep -q "aes-256-cbc" && openssl cms -cmsout -print -inform DER -in a.p7m | grep -q rsaEncryption
+ok "cifratoken -> openssl (2 destinatários, AES-256-CBC + rsaEncryption)"
+
+# 2. openssl cifra (comando do parecer); cifratoken decifra com o .pfx
+openssl cms -encrypt -binary -aes256 -in original.bin -outform DER -out b.p7m titular.pem
+$CLI decifrar -i b.p7m -o b.bin --pfx titular.pfx >/dev/null; igual b.bin
+ok "openssl -> cifratoken (DER)"
+
+# 3. mesmo arquivo em PEM
+openssl cms -encrypt -binary -aes256 -in original.bin -outform PEM -out c.pem.p7m titular.pem
+$CLI decifrar -i c.pem.p7m -o c.bin --pfx titular.pfx >/dev/null; igual c.bin
+ok "openssl -> cifratoken (PEM)"
+
+# 4. RSA-OAEP nos dois sentidos
+$CLI cifrar -i original.bin -o d.p7m -r titular.pem --oaep >/dev/null
+openssl cms -cmsout -print -inform DER -in d.p7m | grep -q rsaesOaep
+openssl cms -decrypt -binary -inform DER -in d.p7m -recip titular.pem -inkey titular.key -out d.bin; igual d.bin
+openssl cms -encrypt -binary -aes256 -in original.bin -outform DER -out e.p7m -recip titular.pem -keyopt rsa_padding_mode:oaep
+$CLI decifrar -i e.p7m -o e.bin --pfx titular.pfx >/dev/null; igual e.bin
+ok "RSA-OAEP nos dois sentidos"
+
+# 5. destinatário errado é recusado
+if $CLI decifrar -i b.p7m -o x.bin --pfx contingencia.pfx >/dev/null 2>&1; then echo "FALHOU: decifrou com a chave errada"; exit 1; fi
+ok "chave de outro certificado é recusada"
+
+# 6. listagem de destinatários
+[ "$($CLI destinatarios -i a.p7m | wc -l)" -eq 2 ]
+ok "destinatarios lista os 2 certificados"
+# 7. token simulado (SoftHSM) por PKCS#11: a chave fica no "token" e não sai dele
+SOFTHSM=$(ls /usr/lib/softhsm/libsofthsm2.so /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so 2>/dev/null | head -1 || true)
+if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
+  mkdir tokens libdl
+  # Pkcs11Interop procura "libdl.so", que o glibc 2.34+ só instala como libdl.so.2 (no Windows não se aplica)
+  ln -s "$(ldconfig -p | awk '/libdl.so.2 .*x86-64/{print $NF; exit}')" libdl/libdl.so
+  export LD_LIBRARY_PATH=$T/libdl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+  printf 'directories.tokendir = %s/tokens\nobjectstore.backend = file\n' "$T" > softhsm2.conf
+  export SOFTHSM2_CONF=$T/softhsm2.conf
+  softhsm2-util --init-token --free --label TOKEN-LAB --so-pin 87654321 --pin 123456 >/dev/null
+  openssl pkcs8 -topk8 -nocrypt -in titular.key -outform DER -out titular.p8
+  openssl x509 -in titular.pem -outform DER -out titular.der
+  pkcs11-tool --module "$SOFTHSM" --login --pin 123456 --write-object titular.p8 --type privkey --id 01 --label titular >/dev/null
+  pkcs11-tool --module "$SOFTHSM" --login --pin 123456 --write-object titular.der --type cert --id 01 --label titular >/dev/null
+  $CLI listar --pkcs11 "$SOFTHSM" | grep -q "titular laboratorio"
+  CIFRATOKEN_PIN=123456 $CLI decifrar -i a.p7m -o f.bin --pkcs11 "$SOFTHSM" >/dev/null; igual f.bin
+  CIFRATOKEN_PIN=123456 $CLI decifrar -i e.p7m -o g.bin --pkcs11 "$SOFTHSM" >/dev/null 2>&1; igual g.bin
+  $CLI cifrar -i original.bin -o h.p7m --do-token "$SOFTHSM" >/dev/null
+  openssl cms -decrypt -binary -inform DER -in h.p7m -recip titular.pem -inkey titular.key -out h.bin; igual h.bin
+  if CIFRATOKEN_PIN=000000 $CLI decifrar -i a.p7m -o x.bin --pkcs11 "$SOFTHSM" 2>err.txt >/dev/null; then echo "FALHOU: aceitou PIN errado"; exit 1; fi
+  grep -q "PIN incorreto" err.txt
+  ok "token PKCS#11 (SoftHSM): listar, decifrar PKCS#1 e OAEP, cifrar --do-token, PIN errado"
+else
+  echo "--  token PKCS#11 não testado (falta softhsm2 ou opensc)"
+fi
+echo "Todos os testes passaram."
