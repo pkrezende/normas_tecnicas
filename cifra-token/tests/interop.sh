@@ -137,6 +137,8 @@ if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
   openssl cms -decrypt -binary -inform DER -in h.p7m -recip titular.pem -inkey titular.key -out h.bin; igual h.bin
   if CIFRATOKEN_PIN=000000 $CLI decifrar -i a.p7m -o x.bin --pkcs11 "$SOFTHSM" 2>err.txt >/dev/null; then echo "FALHOU: aceitou PIN errado"; exit 1; fi
   grep -q "PIN incorreto" err.txt
+  if CIFRATOKEN_PIN= $CLI decifrar -i a.p7m -o x.bin --pkcs11 "$SOFTHSM" 2>err.txt >/dev/null; then echo "FALHOU: aceitou PIN vazio"; exit 1; fi
+  grep -q "Digite o PIN" err.txt
   CIFRATOKEN_PIN=123456 $CLI assinar -i original.bin -o tok.p7s --pkcs11 "$SOFTHSM" --politica "$DIR/CifraToken.Testes/dados/PA_AD_RB_v2_3.der" >/dev/null 2>&1
   openssl cms -verify -binary -inform DER -in tok.p7s -content original.bin -noverify -out /dev/null 2>/dev/null
   ok "token PKCS#11 (SoftHSM): listar, decifrar PKCS#1 e OAEP, cifrar --do-token, assinar, PIN errado"

@@ -77,21 +77,69 @@ public sealed class TokenPkcs11 : IDisposable
     }
     readonly IPkcs11Library biblioteca;
     readonly List<ISession> sessoes = new();
+    bool descartado;
 
     public string Caminho { get; }
+
+    // Um driver é inicializado uma vez por processo (C_Initialize). Abrir de novo daria CKR_CRYPTOKI_ALREADY_INITIALIZED,
+    // e o C_Finalize de uma instância derrubaria as sessões da outra; por isso as instâncias compartilham a biblioteca.
+    static readonly Dictionary<string, (IPkcs11Library Biblioteca, int Usos)> Abertas = new(StringComparer.OrdinalIgnoreCase);
 
     public TokenPkcs11(string caminhoBiblioteca)
     {
         Caminho = caminhoBiblioteca;
-        biblioteca = Fabricas.Pkcs11LibraryFactory.LoadPkcs11Library(Fabricas, caminhoBiblioteca, AppType.MultiThreaded);
+        lock (Abertas)
+        {
+            if (Abertas.TryGetValue(caminhoBiblioteca, out var aberta))
+            {
+                biblioteca = aberta.Biblioteca;
+                Abertas[caminhoBiblioteca] = (aberta.Biblioteca, aberta.Usos + 1);
+                return;
+            }
+            biblioteca = Carregar(caminhoBiblioteca);
+            Abertas[caminhoBiblioteca] = (biblioteca, 1);
+        }
+    }
+
+    /// <summary>
+    /// C_Initialize com travas do sistema (multithread); alguns drivers recusam esses argumentos
+    /// (CKR_ARGUMENTS_BAD ou CKR_CANT_LOCK) e só aceitam C_Initialize(NULL), o modo de uma thread.
+    /// </summary>
+    static IPkcs11Library Carregar(string caminho)
+    {
+        try
+        {
+            return Fabricas.Pkcs11LibraryFactory.LoadPkcs11Library(Fabricas, caminho, AppType.MultiThreaded);
+        }
+        catch (Pkcs11Exception e) when (e.RV is CKR.CKR_ARGUMENTS_BAD or CKR.CKR_CANT_LOCK or CKR.CKR_NEED_TO_CREATE_THREADS)
+        {
+            try { return Fabricas.Pkcs11LibraryFactory.LoadPkcs11Library(Fabricas, caminho, AppType.SingleThreaded); }
+            catch (Pkcs11Exception e2) { throw new CryptographicException(Mensagem(e2.RV, "inicializar o driver do token"), e2); }
+        }
+        catch (Pkcs11Exception e) { throw new CryptographicException(Mensagem(e.RV, "inicializar o driver do token"), e); }
     }
 
     /// <summary>Tokens conectados e inicializados, na ordem dos slots.</summary>
-    public List<ISlot> Tokens() => biblioteca.GetSlotList(SlotsType.WithTokenPresent)
-        .Where(s => s.GetTokenInfo().TokenFlags.TokenInitialized).ToList();
+    public List<ISlot> Tokens()
+    {
+        List<ISlot> slots;
+        try { slots = biblioteca.GetSlotList(SlotsType.WithTokenPresent); }
+        catch (Pkcs11Exception e) { throw new CryptographicException(Mensagem(e.RV, "listar os tokens conectados"), e); }
+        return slots.Where(s =>
+        {
+            try { return s.GetTokenInfo().TokenFlags.TokenInitialized; }
+            catch (Pkcs11Exception) { return false; } // leitor com cartão não reconhecido
+        }).ToList();
+    }
 
     /// <summary>Lê os certificados de todos os tokens conectados. Na maioria dos tokens não pede PIN.</summary>
     public List<CertificadoNoToken> Certificados()
+    {
+        try { return LerCertificados(); }
+        catch (Pkcs11Exception e) { throw new CryptographicException(Mensagem(e.RV, "ler os certificados do token"), e); }
+    }
+
+    List<CertificadoNoToken> LerCertificados()
     {
         var lista = new List<CertificadoNoToken>();
         foreach (var slot in Tokens())
@@ -132,16 +180,25 @@ public sealed class TokenPkcs11 : IDisposable
     /// <summary>Abre sessão com PIN e devolve a chave privada do certificado, como objeto RSA que decifra dentro do token.</summary>
     public RSA ChavePrivada(CertificadoNoToken alvo, string pin)
     {
-        var sessao = SlotDo(alvo).OpenSession(SessionType.ReadOnly);
-        sessoes.Add(sessao);
+        if (string.IsNullOrEmpty(pin)) throw new CryptographicException("Digite o PIN do token.");
+        var slot = SlotDo(alvo);
+        var sessao = AbrirSessao(slot, SessionType.ReadOnly);
         try
         {
             sessao.Login(CKU.CKU_USER, pin);
         }
         catch (Pkcs11Exception e) when (e.RV == CKR.CKR_USER_ALREADY_LOGGED_IN) { }
+        catch (Pkcs11Exception e) when (e.RV is CKR.CKR_ARGUMENTS_BAD or CKR.CKR_SESSION_READ_ONLY)
+        {
+            // há drivers que só aceitam o login numa sessão de leitura e escrita
+            sessao = AbrirSessao(slot, SessionType.ReadWrite);
+            try { sessao.Login(CKU.CKU_USER, pin); }
+            catch (Pkcs11Exception e2) when (e2.RV == CKR.CKR_USER_ALREADY_LOGGED_IN) { }
+            catch (Pkcs11Exception e2) { throw new CryptographicException(Mensagem(e2.RV, "entrar com o PIN"), e2); }
+        }
         catch (Pkcs11Exception e)
         {
-            throw new CryptographicException(Mensagem(e.RV), e);
+            throw new CryptographicException(Mensagem(e.RV, "entrar com o PIN"), e);
         }
 
         var busca = new List<IObjectAttribute>
@@ -151,15 +208,44 @@ public sealed class TokenPkcs11 : IDisposable
         };
         if (alvo.Id.Length > 0)
             busca.Add(Fabricas.ObjectAttributeFactory.Create(CKA.CKA_ID, alvo.Id));
-        var chaves = sessao.FindAllObjects(busca);
+        List<IObjectHandle> chaves;
+        try { chaves = sessao.FindAllObjects(busca); }
+        catch (Pkcs11Exception e) { throw new CryptographicException(Mensagem(e.RV, "procurar a chave privada"), e); }
+        if (chaves.Count == 0 && alvo.Id.Length > 0)
+        {
+            // alguns drivers gravam o CKA_ID da chave diferente do certificado: usa a única chave RSA, se houver só uma
+            try { chaves = sessao.FindAllObjects(busca.Take(2).ToList()); }
+            catch (Pkcs11Exception e) { throw new CryptographicException(Mensagem(e.RV, "procurar a chave privada"), e); }
+            if (chaves.Count > 1) chaves.Clear();
+        }
         if (chaves.Count == 0)
             throw new CryptographicException($"O token não tem a chave privada do certificado \"{CmsCifra.Nome(alvo.Certificado)}\".");
         return new RsaNoToken(sessao, chaves[0], alvo.Certificado.GetRSAPublicKey()!.KeySize);
     }
 
+    ISession AbrirSessao(ISlot slot, SessionType tipo)
+    {
+        try
+        {
+            var sessao = slot.OpenSession(tipo);
+            sessoes.Add(sessao);
+            return sessao;
+        }
+        catch (Pkcs11Exception e) { throw new CryptographicException(Mensagem(e.RV, "abrir a sessão no token"), e); }
+    }
+
     ISlot SlotDo(CertificadoNoToken alvo) =>
         Tokens().FirstOrDefault(s => s.GetTokenInfo().Label.Trim() == alvo.Token)
         ?? throw new CryptographicException($"O token \"{alvo.Token}\" não está mais conectado.");
+
+    /// <summary>Mensagem com a etapa em que o token recusou, para facilitar o diagnóstico.</summary>
+    public static string Mensagem(CKR rv, string etapa) => rv switch
+    {
+        CKR.CKR_ARGUMENTS_BAD or CKR.CKR_FUNCTION_FAILED or CKR.CKR_GENERAL_ERROR =>
+            $"O token recusou a operação ao {etapa} ({rv}). Confira se o driver escolhido em Preferências é o do seu token " +
+            "e se o middleware do fabricante está atualizado.",
+        _ => Mensagem(rv),
+    };
 
     public static string Mensagem(CKR rv) => rv switch
     {
@@ -175,12 +261,23 @@ public sealed class TokenPkcs11 : IDisposable
 
     public void Dispose()
     {
+        if (descartado) return;
+        descartado = true;
         foreach (var s in sessoes)
         {
             try { s.Logout(); } catch (Pkcs11Exception) { }
-            s.Dispose();
+            try { s.Dispose(); } catch (Pkcs11Exception) { }
         }
-        biblioteca.Dispose();
+        lock (Abertas)
+        {
+            var (b, usos) = Abertas[Caminho];
+            if (usos > 1) Abertas[Caminho] = (b, usos - 1);
+            else
+            {
+                Abertas.Remove(Caminho);
+                b.Dispose();
+            }
+        }
     }
 
     /// <summary>RSA cuja operação de decifrar é feita pelo token (C_Decrypt).</summary>
@@ -221,7 +318,7 @@ public sealed class TokenPkcs11 : IDisposable
             }
             catch (Pkcs11Exception e)
             {
-                throw new CryptographicException(Mensagem(e.RV), e);
+                throw new CryptographicException(Mensagem(e.RV, "decifrar"), e);
             }
         }
 
@@ -244,7 +341,7 @@ public sealed class TokenPkcs11 : IDisposable
             }
             catch (Pkcs11Exception e)
             {
-                throw new CryptographicException(Mensagem(e.RV), e);
+                throw new CryptographicException(Mensagem(e.RV, "assinar"), e);
             }
         }
 

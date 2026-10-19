@@ -31,9 +31,14 @@ sealed class Credencial : IDisposable
     public string? AvisoPin()
     {
         if (cfg.Modo != ModoCredencial.Token || !File.Exists(cfg.Driver)) return null;
-        using var t = new TokenPkcs11(cfg.Driver);
-        var primeiro = t.Certificados().FirstOrDefault();
-        return primeiro is null ? null : t.AvisoPin(primeiro);
+        try
+        {
+            using var t = new TokenPkcs11(cfg.Driver);
+            var primeiro = t.Certificados().FirstOrDefault();
+            return primeiro is null ? null : t.AvisoPin(primeiro);
+        }
+        // o aviso é só uma cortesia: se falhar, o Conectar mostra o erro de verdade
+        catch (Exception e) when (e is CryptographicException or Pkcs11Exception or UnmanagedException) { return null; }
     }
 
     public void Conectar(string pin)
@@ -46,6 +51,7 @@ sealed class Credencial : IDisposable
                     throw new CryptographicException("Configure o driver do token em Preferências > Credencial.");
                 if (!File.Exists(cfg.Driver))
                     throw new CryptographicException($"O arquivo do driver do token não foi encontrado em \"{cfg.Driver}\". Verifique as Preferências.");
+                if (string.IsNullOrEmpty(pin)) throw new CryptographicException("Digite o PIN do token e clique em Conectar.");
                 token = new TokenPkcs11(cfg.Driver);
                 var certs = token.Certificados();
                 if (certs.Count == 0)
