@@ -48,6 +48,8 @@ jobs:
           }
       - name: Teste de fumaça do executável de linha de comando com openssl
         shell: bash
+        env:
+          MSYS2_ARG_CONV_EXCL: "*"   # impede o Git Bash de trocar "/CN=..." por um caminho do Windows
         run: |
           set -e
           CLI=publicado/CifraToken-win-x64/cifratoken.exe
