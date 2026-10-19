@@ -81,23 +81,19 @@ public sealed class TokenPkcs11 : IDisposable
 
     public string Caminho { get; }
 
-    // Um driver é inicializado uma vez por processo (C_Initialize). Abrir de novo daria CKR_CRYPTOKI_ALREADY_INITIALIZED,
-    // e o C_Finalize de uma instância derrubaria as sessões da outra; por isso as instâncias compartilham a biblioteca.
-    static readonly Dictionary<string, (IPkcs11Library Biblioteca, int Usos)> Abertas = new(StringComparer.OrdinalIgnoreCase);
+    // Um driver é inicializado uma vez por processo (C_Initialize) e fica carregado até o programa fechar.
+    // Abrir de novo daria CKR_CRYPTOKI_ALREADY_INITIALIZED, o C_Finalize de uma instância derrubaria as sessões
+    // da outra, e há drivers que respondem CKR_GENERAL_ERROR a um novo C_Initialize depois do C_Finalize.
+    static readonly Dictionary<string, IPkcs11Library> Abertas = new(StringComparer.OrdinalIgnoreCase);
 
     public TokenPkcs11(string caminhoBiblioteca)
     {
         Caminho = caminhoBiblioteca;
         lock (Abertas)
         {
-            if (Abertas.TryGetValue(caminhoBiblioteca, out var aberta))
-            {
-                biblioteca = aberta.Biblioteca;
-                Abertas[caminhoBiblioteca] = (aberta.Biblioteca, aberta.Usos + 1);
-                return;
-            }
-            biblioteca = Carregar(caminhoBiblioteca);
-            Abertas[caminhoBiblioteca] = (biblioteca, 1);
+            if (!Abertas.TryGetValue(caminhoBiblioteca, out var aberta))
+                Abertas[caminhoBiblioteca] = aberta = Carregar(caminhoBiblioteca);
+            biblioteca = aberta;
         }
     }
 
@@ -268,16 +264,7 @@ public sealed class TokenPkcs11 : IDisposable
             try { s.Logout(); } catch (Pkcs11Exception) { }
             try { s.Dispose(); } catch (Pkcs11Exception) { }
         }
-        lock (Abertas)
-        {
-            var (b, usos) = Abertas[Caminho];
-            if (usos > 1) Abertas[Caminho] = (b, usos - 1);
-            else
-            {
-                Abertas.Remove(Caminho);
-                b.Dispose();
-            }
-        }
+        // a biblioteca continua carregada (ver Abertas); só as sessões desta instância são encerradas
     }
 
     /// <summary>RSA cuja operação de decifrar é feita pelo token (C_Decrypt).</summary>
