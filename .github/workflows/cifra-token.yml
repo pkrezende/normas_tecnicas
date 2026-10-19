@@ -28,6 +28,8 @@ jobs:
   windows:
     name: Testes e executáveis (Windows)
     runs-on: windows-latest
+    permissions:
+      contents: write   # para publicar a Release com os .zip
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -69,3 +71,19 @@ jobs:
           name: CifraToken-windows
           path: cifra-token/publicado/
           retention-days: 30
+      - name: Publicar Release com os .zip
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "cifratoken-v0.1.${{ github.run_number }}"
+          foreach ($rid in "win-x64", "win-x86") {
+            Compress-Archive -Path "publicado/CifraToken-$rid/*" -DestinationPath "publicado/CifraToken-$rid.zip"
+          }
+          $notas = "Executáveis do CifraToken para Windows (não precisam de instalação).`n`n" +
+                   "- CifraToken-win-x64.zip: Windows 64 bits (o normal).`n" +
+                   "- CifraToken-win-x86.zip: use se o driver do token só existir em 32 bits.`n`n" +
+                   "Descompacte e abra CifraToken.exe. Instruções em LEIA-ME.md, dentro do .zip."
+          gh release create $tag publicado/CifraToken-win-x64.zip publicado/CifraToken-win-x86.zip `
+            --target "${{ github.sha }}" --title "CifraToken 0.1.${{ github.run_number }}" --notes $notas --latest
