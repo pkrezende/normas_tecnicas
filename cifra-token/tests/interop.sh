@@ -51,13 +51,18 @@ ok "chave de outro certificado é recusada"
 # 6. listagem de destinatários
 [ "$($CLI destinatarios -i a.p7m | wc -l)" -eq 2 ]
 ok "destinatarios lista os 2 certificados"
-# 7. token simulado (SoftHSM) por PKCS#11: a chave fica no "token" e não sai dele
+# 7. cifra com senha no formato .enc do Quimera (Manual v1.0, Apêndice C)
+CIFRATOKEN_SENHA='Frase senha de Teste 2026!' $CLI cifrar-senha -i original.bin -o s.enc >/dev/null
+openssl enc -aes-256-cbc -d -in s.enc -out s.bin -pbkdf2 -iter 1000000 -md sha512 -pass 'pass:Frase senha de Teste 2026!'; igual s.bin
+openssl enc -aes-256-cbc -e -in original.bin -out t.enc -pbkdf2 -iter 1000000 -md sha512 -pass 'pass:Frase senha de Teste 2026!'
+CIFRATOKEN_SENHA='Frase senha de Teste 2026!' $CLI decifrar-senha -i t.enc -o t.bin >/dev/null; igual t.bin
+if CIFRATOKEN_SENHA=errada $CLI decifrar-senha -i t.enc -o x.bin >/dev/null 2>&1; then echo "FALHOU: aceitou senha errada"; exit 1; fi
+ok "senha .enc (openssl enc / Quimera) nos dois sentidos"
+
+# 8. token simulado (SoftHSM) por PKCS#11: a chave fica no "token" e não sai dele
 SOFTHSM=$(ls /usr/lib/softhsm/libsofthsm2.so /usr/lib/x86_64-linux-gnu/softhsm/libsofthsm2.so 2>/dev/null | head -1 || true)
 if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
-  mkdir tokens libdl
-  # Pkcs11Interop procura "libdl.so", que o glibc 2.34+ só instala como libdl.so.2 (no Windows não se aplica)
-  ln -s "$(ldconfig -p | awk '/libdl.so.2 .*x86-64/{print $NF; exit}')" libdl/libdl.so
-  export LD_LIBRARY_PATH=$T/libdl${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
+  mkdir tokens
   printf 'directories.tokendir = %s/tokens\nobjectstore.backend = file\n' "$T" > softhsm2.conf
   export SOFTHSM2_CONF=$T/softhsm2.conf
   softhsm2-util --init-token --free --label TOKEN-LAB --so-pin 87654321 --pin 123456 >/dev/null

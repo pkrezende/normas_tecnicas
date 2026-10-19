@@ -1,401 +1,221 @@
-using System.Security.Cryptography;
-using System.Security.Cryptography.X509Certificates;
-using CifraToken.Core;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Platform.Storage;
 
 namespace CifraToken.App;
 
-/// <summary>Janela com o driver do token no topo e as abas Cifrar e Decifrar.</summary>
-sealed class JanelaPrincipal : Form
+/// <summary>
+/// Janela principal: barra de comandos à esquerda (que se expande com o botão de menu),
+/// título da tela no topo e a tela escolhida no centro.
+/// </summary>
+sealed class JanelaPrincipal : Window
 {
-    static readonly string ArquivoConfig = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "CifraToken", "driver-pkcs11.txt");
+    public static readonly string Versao =
+        typeof(JanelaPrincipal).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
-    readonly TextBox driver = new() { Dock = DockStyle.Fill };
+    readonly Ambiente amb;
+    readonly ContentControl conteudo = new();
+    readonly TextBlock titulo = new() { FontWeight = FontWeight.SemiBold, FontSize = 15, VerticalAlignment = VerticalAlignment.Center };
+    readonly TextBlock estado = new() { VerticalAlignment = VerticalAlignment.Center, FontSize = 12, Opacity = 0.8 };
+    readonly List<TextBlock> textosNav = new();
+    readonly Dictionary<Control, Button> botaoDaTela = new();
+    readonly PaginaCifrar cifrar;
+    readonly PaginaDecifrar decifrar;
+    readonly PaginaContatos contatos;
+    readonly Control inicio;
+    bool expandida = true;
 
-    readonly TextBox arquivoCifrar = new() { Dock = DockStyle.Fill };
-    readonly ListView destinatarios = Listas.Certificados();
-    readonly CheckBox oaep = new() { Text = "Usar RSA-OAEP (só se todos os tokens dos destinatários suportarem)", AutoSize = true };
-
-    readonly TextBox arquivoDecifrar = new() { Dock = DockStyle.Fill };
-    readonly TextBox infoDestinatarios = new() { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
-    readonly RadioButton usarDriver = new() { Text = "Token pelo driver PKCS#11 indicado no topo (recomendado para o Dexon)", AutoSize = true, Checked = true };
-    readonly RadioButton usarWindows = new() { Text = "Token ou certificado publicado no Windows (o middleware pede o PIN)", AutoSize = true };
-    readonly RadioButton usarPfx = new() { Text = "Certificado A1 em arquivo (.pfx / .p12):", AutoSize = true };
-    readonly TextBox arquivoPfx = new() { Width = 360, Enabled = false };
-
-    readonly ToolStripStatusLabel status = new() { Spring = true, TextAlign = ContentAlignment.MiddleLeft };
-
-    public JanelaPrincipal(string? arquivoInicial)
+    public JanelaPrincipal(Ambiente amb, string? arquivoInicial)
     {
-        Text = "CifraToken - cifrar arquivos com certificado digital";
-        Size = new Size(920, 680);
-        MinimumSize = new Size(720, 520);
-        StartPosition = FormStartPosition.CenterScreen;
+        this.amb = amb;
+        Title = $"CifraToken {Versao}";
+        Width = 1040;
+        Height = 660;
+        MinWidth = 780;
+        MinHeight = 500;
+        WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
-        var abas = new TabControl { Dock = DockStyle.Fill };
-        abas.TabPages.Add(AbaCifrar());
-        abas.TabPages.Add(AbaDecifrar());
-        var barra = new StatusStrip();
-        barra.Items.Add(status);
-        Controls.Add(abas);
-        Controls.Add(LinhaDriver());
-        Controls.Add(barra);
+        cifrar = new PaginaCifrar(amb, () => Mostrar(contatos!));
+        decifrar = new PaginaDecifrar(amb);
+        contatos = new PaginaContatos(amb);
+        inicio = TelaInicial();
 
-        driver.Text = LerConfig() ?? TokenPkcs11.PrimeiraBibliotecaInstalada() ?? "";
-        Status(driver.Text.Length > 0
-            ? "Driver do token: " + driver.Text
-            : "Driver PKCS#11 do token não encontrado. Instale o middleware DXSafe ou indique a DLL no topo.");
+        var navTopo = new StackPanel { Spacing = 2 };
+        navTopo.Children.Add(ItemNav(Icones.Menu, "Recolher menu", () => Expandir(!expandida), marcar: false));
+        navTopo.Children.Add(new Border { Height = 8 });
+        navTopo.Children.Add(ItemNav(Icones.Cadeado, "Cifrar Arquivos", () => Mostrar(cifrar), cifrar));
+        navTopo.Children.Add(ItemNav(Icones.CadeadoAberto, "Decifrar Arquivos", () => Mostrar(decifrar), decifrar));
+        navTopo.Children.Add(ItemNav(Icones.Pessoas, "Contatos e Certificados", () => Mostrar(contatos), contatos));
+
+        var navBase = new StackPanel { Spacing = 2 };
+        navBase.Children.Add(ItemNav(Icones.Engrenagem, "Preferências", () => _ = AbrirPreferencias(), marcar: false));
+        navBase.Children.Add(ItemNav(Icones.Ajuda, "Manual do usuário", () => _ = AbrirManual(), marcar: false));
+        navBase.Children.Add(ItemNav(Icones.Info, "Sobre o CifraToken", () => _ = Sobre(), marcar: false));
+        navBase.Children.Add(ItemNav(Icones.Desligar, "Sair", Close, marcar: false));
+
+        var nav = new DockPanel { Margin = new Thickness(4) };
+        DockPanel.SetDock(navBase, Dock.Bottom);
+        nav.Children.Add(navBase);
+        nav.Children.Add(navTopo);
+
+        var cabecalho = new DockPanel { Margin = new Thickness(12, 8) };
+        var painelEstado = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6, Children = { Icones.Criar(Icones.Token, 14), estado } };
+        DockPanel.SetDock(painelEstado, Dock.Right);
+        cabecalho.Children.Add(painelEstado);
+        cabecalho.Children.Add(titulo);
+
+        var direita = new DockPanel();
+        DockPanel.SetDock(cabecalho, Dock.Top);
+        direita.Children.Add(cabecalho);
+        direita.Children.Add(new Border
+        {
+            BorderBrush = new SolidColorBrush(Color.FromArgb(60, 128, 128, 128)), BorderThickness = new Thickness(0, 1, 0, 0),
+            Child = conteudo,
+        });
+
+        var raiz = new DockPanel();
+        var barra = new Border { Background = new SolidColorBrush(Color.FromArgb(28, 128, 128, 128)), Child = nav };
+        DockPanel.SetDock(barra, Dock.Left);
+        raiz.Children.Add(barra);
+        raiz.Children.Add(direita);
+        Content = raiz;
+
+        amb.Mudou += AtualizarEstado;
+        AtualizarEstado();
+        Mostrar(inicio);
+        Closed += (_, _) => amb.Dispose();
 
         if (arquivoInicial is not null && File.Exists(arquivoInicial))
         {
-            if (arquivoInicial.EndsWith(".p7m", StringComparison.OrdinalIgnoreCase))
-            {
-                abas.SelectedIndex = 1;
-                DefinirArquivoDecifrar(arquivoInicial);
-            }
-            else
-                arquivoCifrar.Text = arquivoInicial;
+            var ext = Path.GetExtension(arquivoInicial).ToLowerInvariant();
+            if (ext is ".p7m" or ".enc") { Mostrar(decifrar); decifrar.Adicionar(new[] { arquivoInicial }); }
+            else { Mostrar(cifrar); cifrar.Adicionar(new[] { arquivoInicial }); }
         }
     }
 
-    Control LinhaDriver()
+    Button ItemNav(string icone, string texto, Action acao, Control? tela = null, bool marcar = true)
     {
-        var linha = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 4, AutoSize = true, Padding = new Padding(8, 8, 8, 0) };
-        linha.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        linha.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        linha.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        linha.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        linha.Controls.Add(new Label { Text = "Driver do token (PKCS#11):", AutoSize = true, Anchor = AnchorStyles.Left }, 0, 0);
-        linha.Controls.Add(driver, 1, 0);
-        linha.Controls.Add(Listas.Botao("Escolher...", (_, _) =>
+        var rotulo = new TextBlock { Text = texto, VerticalAlignment = VerticalAlignment.Center };
+        textosNav.Add(rotulo);
+        var b = new Button
         {
-            using var d = new OpenFileDialog
+            Content = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Children = { Icones.Criar(icone, 20), rotulo } },
+            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left,
+            Background = Brushes.Transparent, Padding = new Thickness(8, 6), MinWidth = 40,
+        };
+        ToolTip.SetTip(b, texto);
+        b.Click += (_, _) => acao();
+        if (tela is not null) botaoDaTela[tela] = b;
+        return b;
+    }
+
+    void Expandir(bool sim)
+    {
+        expandida = sim;
+        foreach (var t in textosNav) t.IsVisible = sim;
+    }
+
+    void Mostrar(Control tela)
+    {
+        conteudo.Content = tela;
+        titulo.Text = tela switch
+        {
+            PaginaCifrar => "Cifrar Arquivos",
+            PaginaDecifrar => "Decifrar Arquivos",
+            PaginaContatos => "Contatos e Certificados",
+            _ => "Escolha uma opção para utilizar",
+        };
+        foreach (var (t, b) in botaoDaTela)
+            b.Background = t == tela ? new SolidColorBrush(Color.FromArgb(50, 0, 120, 215)) : Brushes.Transparent;
+        if (tela is IAoMostrar m) m.AoMostrar();
+    }
+
+    void AtualizarEstado()
+    {
+        var c = amb.Credencial;
+        estado.Text = amb.Cfg.Modo switch
+        {
+            ModoCredencial.Windows => "Credencial: repositório do Windows",
+            _ when c.Conectada => "Conectado: " + c.Descricao,
+            ModoCredencial.Token => "Token: " + (string.IsNullOrEmpty(amb.Cfg.Driver) ? "driver não configurado" : Path.GetFileName(amb.Cfg.Driver) + " (desconectado)"),
+            _ => "Arquivo .pfx (desconectado)",
+        };
+    }
+
+    Control TelaInicial()
+    {
+        Button Bloco(string icone, string texto, string detalhe, Func<Control> tela)
+        {
+            var b = new Button
             {
-                Filter = "Biblioteca PKCS#11 (*.dll)|*.dll",
-                InitialDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System),
-                FileName = "DXSafePKCS11.dll",
+                Width = 220, Height = 120, Margin = new Thickness(8),
+                Content = new StackPanel
+                {
+                    Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center,
+                    Children =
+                    {
+                        Icones.Criar(icone, 32),
+                        new TextBlock { Text = texto, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center },
+                        new TextBlock { Text = detalhe, FontSize = 11, Opacity = 0.75, TextWrapping = TextWrapping.Wrap, TextAlignment = TextAlignment.Center },
+                    },
+                },
             };
-            if (d.ShowDialog(this) == DialogResult.OK) { driver.Text = d.FileName; GravarConfig(d.FileName); }
-        }), 2, 0);
-        linha.Controls.Add(Listas.Botao("Testar token", (_, _) => TestarToken()), 3, 0);
-        return linha;
-    }
-
-    TabPage AbaCifrar()
-    {
-        var aba = new TabPage("Cifrar") { Padding = new Padding(10) };
-        var grade = Listas.Grade(5);
-
-        grade.Controls.Add(Listas.Rotulo("1. Arquivo a cifrar (ou arraste para esta janela):"), 0, 0);
-        grade.Controls.Add(LinhaArquivo(arquivoCifrar, "Todos os arquivos|*.*", null), 0, 1);
-
-        grade.Controls.Add(Listas.Rotulo("2. Destinatários (quem poderá decifrar). Inclua você mesmo e, se houver, o certificado de contingência do setor:"), 0, 2);
-        var painelLista = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2 };
-        painelLista.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        painelLista.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var botoes = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, Dock = DockStyle.Fill };
-        botoes.Controls.Add(Listas.Botao("Do token / Windows...", (_, _) => AdicionarDoRepositorio()));
-        botoes.Controls.Add(Listas.Botao("De arquivo .cer...", (_, _) => AdicionarDeArquivo()));
-        botoes.Controls.Add(Listas.Botao("Remover", (_, _) =>
-        {
-            foreach (ListViewItem item in destinatarios.SelectedItems) destinatarios.Items.Remove(item);
-        }));
-        painelLista.Controls.Add(destinatarios, 0, 0);
-        painelLista.Controls.Add(botoes, 1, 0);
-        grade.Controls.Add(painelLista, 0, 3);
-        grade.RowStyles[3] = new RowStyle(SizeType.Percent, 100);
-
-        var rodape = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
-        var cifrar = Listas.Botao("3. Cifrar e salvar .p7m...", (_, _) => Cifrar());
-        cifrar.Font = new Font(cifrar.Font, FontStyle.Bold);
-        rodape.Controls.Add(cifrar);
-        rodape.Controls.Add(oaep);
-        grade.Controls.Add(rodape, 0, 4);
-
-        aba.Controls.Add(grade);
-        Listas.AceitarArrastar(aba, f => arquivoCifrar.Text = f);
-        return aba;
-    }
-
-    TabPage AbaDecifrar()
-    {
-        var aba = new TabPage("Decifrar") { Padding = new Padding(10) };
-        var grade = Listas.Grade(6);
-
-        grade.Controls.Add(Listas.Rotulo("1. Arquivo cifrado (.p7m), ou arraste para esta janela:"), 0, 0);
-        grade.Controls.Add(LinhaArquivo(arquivoDecifrar, "Arquivo cifrado (*.p7m)|*.p7m|Todos os arquivos|*.*", DefinirArquivoDecifrar), 0, 1);
-        grade.Controls.Add(Listas.Rotulo("Este arquivo foi cifrado para:"), 0, 2);
-        grade.Controls.Add(infoDestinatarios, 0, 3);
-        grade.RowStyles[3] = new RowStyle(SizeType.Percent, 100);
-
-        var origem = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, Dock = DockStyle.Fill };
-        origem.Controls.Add(Listas.Rotulo("2. Onde está a sua chave privada:"));
-        origem.Controls.Add(usarDriver);
-        origem.Controls.Add(usarWindows);
-        var linhaPfx = new FlowLayoutPanel { AutoSize = true };
-        var escolherPfx = Listas.Botao("Escolher...", (_, _) =>
-        {
-            using var d = new OpenFileDialog { Filter = "Certificado A1 (*.pfx;*.p12)|*.pfx;*.p12" };
-            if (d.ShowDialog(this) == DialogResult.OK) arquivoPfx.Text = d.FileName;
-        });
-        escolherPfx.Enabled = false;
-        usarPfx.CheckedChanged += (_, _) => { arquivoPfx.Enabled = escolherPfx.Enabled = usarPfx.Checked; };
-        linhaPfx.Controls.Add(usarPfx);
-        linhaPfx.Controls.Add(arquivoPfx);
-        linhaPfx.Controls.Add(escolherPfx);
-        origem.Controls.Add(linhaPfx);
-        grade.Controls.Add(origem, 0, 4);
-
-        var decifrar = Listas.Botao("3. Decifrar e salvar...", (_, _) => Decifrar());
-        decifrar.Font = new Font(decifrar.Font, FontStyle.Bold);
-        grade.Controls.Add(decifrar, 0, 5);
-
-        aba.Controls.Add(grade);
-        Listas.AceitarArrastar(aba, DefinirArquivoDecifrar);
-        return aba;
-    }
-
-    Control LinhaArquivo(TextBox caixa, string filtro, Action<string>? aoEscolher)
-    {
-        var linha = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
-        linha.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        linha.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        linha.Controls.Add(caixa, 0, 0);
-        linha.Controls.Add(Listas.Botao("Escolher...", (_, _) =>
-        {
-            using var d = new OpenFileDialog { Filter = filtro };
-            if (d.ShowDialog(this) != DialogResult.OK) return;
-            if (aoEscolher is null) caixa.Text = d.FileName; else aoEscolher(d.FileName);
-        }), 1, 0);
-        return linha;
-    }
-
-    string? Driver() => string.IsNullOrWhiteSpace(driver.Text) ? null : driver.Text.Trim();
-
-    void TestarToken()
-    {
-        if (Driver() is not { } caminho) { Erro("Indique a DLL do driver PKCS#11 (no Dexon, DXSafePKCS11.dll em C:\\Windows\\System32)."); return; }
-        Executar(() =>
-        {
-            using var token = new TokenPkcs11(caminho);
-            var certs = token.Certificados();
-            GravarConfig(caminho);
-            var texto = certs.Count == 0
-                ? "O driver carregou, mas nenhum certificado foi encontrado. O token está conectado?"
-                : string.Join("\n", certs.Select(c =>
-                    $"• {CmsCifra.Nome(c.Certificado)} (token {c.Token}, válido até {c.Certificado.NotAfter:dd/MM/yyyy})" +
-                    (CmsCifra.PermiteCifrar(c.Certificado) ? "" : " - não permite cifrar")));
-            Status($"Token: {certs.Count} certificado(s) encontrado(s).");
-            MessageBox.Show(this, texto, "Certificados no token", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        });
-    }
-
-    void AdicionarDoRepositorio()
-    {
-        using var janela = new EscolherCertificado(Driver);
-        if (janela.ShowDialog(this) != DialogResult.OK) return;
-        foreach (var (cert, origem) in janela.Escolhidos) AdicionarDestinatario(cert, origem);
-    }
-
-    void AdicionarDeArquivo()
-    {
-        using var d = new OpenFileDialog
-        {
-            Filter = "Certificado (*.cer;*.crt;*.pem;*.der)|*.cer;*.crt;*.pem;*.der|Todos os arquivos|*.*",
-            Multiselect = true,
-        };
-        if (d.ShowDialog(this) != DialogResult.OK) return;
-        foreach (var caminho in d.FileNames)
-        {
-            try { AdicionarDestinatario(CmsCifra.LerCertificado(caminho), "Arquivo " + Path.GetFileName(caminho)); }
-            catch (CryptographicException e) { Erro($"Não consegui ler {Path.GetFileName(caminho)}: {e.Message}"); }
+            b.Click += (_, _) => Mostrar(tela());
+            return b;
         }
-    }
-
-    void AdicionarDestinatario(X509Certificate2 cert, string origem)
-    {
-        if (destinatarios.Items.Cast<ListViewItem>().Any(i => ((X509Certificate2)i.Tag!).Thumbprint == cert.Thumbprint))
-            return;
-        if (!CmsCifra.PermiteCifrar(cert) && MessageBox.Show(this,
-                $"O certificado \"{CmsCifra.Nome(cert)}\" não tem o uso \"cifragem de chave\" (keyEncipherment). " +
-                "O token pode recusar a decifração. Adicionar mesmo assim?",
-                "Certificado sem uso para cifrar", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-            return;
-        if (cert.NotAfter < DateTime.Now)
-            MessageBox.Show(this, $"O certificado \"{CmsCifra.Nome(cert)}\" venceu em {cert.NotAfter:dd/MM/yyyy}. " +
-                "Ainda é possível cifrar, mas confirme que o destinatário guarda essa chave.",
-                "Certificado vencido", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-        destinatarios.Items.Add(Listas.Item(cert, origem));
-    }
-
-    void Cifrar()
-    {
-        if (!File.Exists(arquivoCifrar.Text)) { Erro("Escolha o arquivo a cifrar."); return; }
-        var itens = destinatarios.Items.Cast<ListViewItem>().ToList();
-        if (itens.Count == 0) { Erro("Adicione pelo menos um destinatário."); return; }
-        var certs = itens.Select(i => (X509Certificate2)i.Tag!).ToList();
-        var temMeu = itens.Any(i => i.SubItems[3].Text.StartsWith("Token") || ((X509Certificate2)i.Tag!).HasPrivateKey);
-        if (!temMeu && MessageBox.Show(this,
-                "Nenhum destinatário veio do seu token ou tem chave neste computador. " +
-                "Se você não estiver na lista, não conseguirá decifrar o arquivo. Continuar?",
-                "Confirmar destinatários", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
-            return;
-
-        using var salvar = new SaveFileDialog
+        return new StackPanel
         {
-            FileName = Path.GetFileName(arquivoCifrar.Text) + ".p7m",
-            InitialDirectory = Path.GetDirectoryName(arquivoCifrar.Text),
-            Filter = "Arquivo cifrado (*.p7m)|*.p7m",
-        };
-        if (salvar.ShowDialog(this) != DialogResult.OK) return;
-        Executar(() =>
-        {
-            var p7m = CmsCifra.Cifrar(File.ReadAllBytes(arquivoCifrar.Text), certs,
-                oaep.Checked ? PreenchimentoRsa.OaepSha1 : PreenchimentoRsa.Pkcs1);
-            File.WriteAllBytes(salvar.FileName, p7m);
-            Status($"Cifrado para {certs.Count} destinatário(s): {salvar.FileName}");
-            MessageBox.Show(this, $"Arquivo cifrado salvo em:\n{salvar.FileName}\n\nO arquivo original não foi apagado.",
-                "Cifrado", MessageBoxButtons.OK, MessageBoxIcon.Information);
-        });
-    }
-
-    void DefinirArquivoDecifrar(string caminho)
-    {
-        arquivoDecifrar.Text = caminho;
-        try
-        {
-            var meus = Repositorio.Pessoais().Where(c => c.HasPrivateKey).ToList();
-            infoDestinatarios.Lines = CmsCifra.Destinatarios(File.ReadAllBytes(caminho)).Select(d =>
+            Margin = new Thickness(24), Spacing = 10,
+            Children =
             {
-                var meu = meus.FirstOrDefault(d.Corresponde);
-                return meu is null ? d.ToString() : $"{d}   <- {CmsCifra.Nome(meu)} (publicado neste Windows)";
-            }).ToArray();
-        }
-        catch (Exception e) when (e is CryptographicException or IOException or FormatException)
-        {
-            infoDestinatarios.Text = "Não é um arquivo CMS cifrado (.p7m) válido: " + e.Message;
-        }
-    }
-
-    void Decifrar()
-    {
-        if (!File.Exists(arquivoDecifrar.Text)) { Erro("Escolha o arquivo .p7m."); return; }
-        string? senhaPfx = null;
-        if (usarPfx.Checked)
-        {
-            if (!File.Exists(arquivoPfx.Text)) { Erro("Escolha o arquivo .pfx."); return; }
-            senhaPfx = PedirSenha.Mostrar(this, "Senha do certificado A1 (.pfx):");
-            if (senhaPfx is null) return;
-        }
-        if (usarDriver.Checked && Driver() is null)
-        {
-            Erro("Indique a DLL do driver PKCS#11 no topo da janela, ou escolha outra opção.");
-            return;
-        }
-
-        var nome = Path.GetFileName(arquivoDecifrar.Text);
-        if (nome.EndsWith(".p7m", StringComparison.OrdinalIgnoreCase)) nome = nome[..^4];
-        using var salvar = new SaveFileDialog
-        {
-            FileName = nome,
-            InitialDirectory = Path.GetDirectoryName(arquivoDecifrar.Text),
-            Filter = "Todos os arquivos|*.*",
+                new WrapPanel
+                {
+                    Children =
+                    {
+                        Bloco(Icones.Cadeado, "Cifrar Arquivos", "Para destinatários (certificado) ou com senha", () => cifrar),
+                        Bloco(Icones.CadeadoAberto, "Decifrar Arquivos", "Com o seu token, .pfx ou a senha", () => decifrar),
+                        Bloco(Icones.Pessoas, "Contatos e Certificados", "Certificados de quem pode receber arquivos cifrados", () => contatos),
+                    },
+                },
+                new TextBlock
+                {
+                    Margin = new Thickness(8, 12, 8, 0), Opacity = 0.75, TextWrapping = TextWrapping.Wrap,
+                    Text = "Algoritmos abertos: AES-256 e RSA no formato CMS (RFC 5652), compatível com o openssl. " +
+                           "Funciona com tokens de qualquer fabricante pelo driver PKCS#11 (Dexon, SafeSign, SafeNet, Watchdata e outros). " +
+                           "Não use para informação classificada.",
+                },
+            },
         };
-        if (salvar.ShowDialog(this) != DialogResult.OK) return;
-
-        Executar(() =>
-        {
-            var p7m = File.ReadAllBytes(arquivoDecifrar.Text);
-            byte[]? claro;
-            if (usarDriver.Checked) claro = DecifrarPeloDriver(p7m);
-            else if (usarPfx.Checked) claro = DecifrarComPfx(p7m, senhaPfx!);
-            else claro = CmsCifra.Decifrar(p7m);
-            if (claro is null) return;
-
-            File.WriteAllBytes(salvar.FileName, claro);
-            Status("Decifrado: " + salvar.FileName);
-            MessageBox.Show(this, "Arquivo decifrado salvo em:\n" + salvar.FileName, "Decifrado",
-                MessageBoxButtons.OK, MessageBoxIcon.Information);
-        });
     }
 
-    byte[]? DecifrarPeloDriver(byte[] p7m)
+    async Task AbrirPreferencias()
     {
-        using var token = new TokenPkcs11(Driver()!);
-        var destinos = CmsCifra.Destinatarios(p7m);
-        var certs = token.Certificados();
-        if (certs.Count == 0)
-            throw new CryptographicException("Nenhum certificado encontrado no token. Ele está conectado?");
-        var alvo = certs.FirstOrDefault(c => destinos.Any(d => d.Corresponde(c.Certificado)))
-            ?? throw new CryptographicException(
-                "Nenhum certificado do token conectado é destinatário deste arquivo. " +
-                "Se o seu certificado foi renovado, o arquivo pode ter sido cifrado para o anterior.");
-        var pin = PedirSenha.Mostrar(this, $"PIN do token \"{alvo.Token}\" para {CmsCifra.Nome(alvo.Certificado)}:",
-            token.AvisoPin(alvo));
-        if (pin is null) return null;
-        using var chave = token.ChavePrivada(alvo, pin);
-        return CmsCifra.Decifrar(p7m, alvo.Certificado, chave);
+        var nova = await new JanelaPreferencias(amb.Cfg.Copia()).ShowDialog<Configuracao?>(this);
+        if (nova is null) return;
+        amb.TrocarConfiguracao(nova);
     }
 
-    byte[] DecifrarComPfx(byte[] p7m, string senha)
+    async Task AbrirManual()
     {
-        var chaves = new X509Certificate2Collection();
-        try
-        {
-            chaves.Import(arquivoPfx.Text, senha, X509KeyStorageFlags.UserKeySet);
-            return CmsCifra.Decifrar(p7m, chaves);
-        }
-        finally
-        {
-            foreach (var c in chaves) c.Dispose();
-        }
+        var caminho = Path.Combine(AppContext.BaseDirectory, "LEIA-ME.md");
+        if (File.Exists(caminho) && Launcher is { } l && await l.LaunchFileInfoAsync(new FileInfo(caminho))) return;
+        await Ui.Mensagem(this, "O manual (LEIA-ME.md) fica na mesma pasta do CifraToken e também no repositório do projeto.");
     }
 
-    void Executar(Action acao)
-    {
-        UseWaitCursor = true;
-        try { acao(); }
-        catch (CryptographicException e)
-        {
-            Erro("Falha na operação criptográfica: " + e.Message);
-        }
-        catch (Net.Pkcs11Interop.Common.Pkcs11Exception e)
-        {
-            Erro(TokenPkcs11.Mensagem(e.RV));
-        }
-        catch (Exception e) when (e is Net.Pkcs11Interop.Common.UnmanagedException or DllNotFoundException or BadImageFormatException)
-        {
-            Erro("Não consegui carregar o driver do token: " + e.Message +
-                 "\n\nConfira se o middleware DXSafe está instalado e se a DLL indicada existe.");
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
-        {
-            Erro(e.Message);
-        }
-        finally { UseWaitCursor = false; }
-    }
+    Task Sobre() => Ui.Mensagem(this,
+        $"CifraToken {Versao}\n\n" +
+        "Cifra e decifra arquivos com certificado digital ICP-Brasil em token, .pfx ou senha.\n\n" +
+        "Para destinatários: CMS EnvelopedData (RFC 5652), AES-256-CBC com chave de sessão em RSA (PKCS#1 v1.5 ou OAEP).\n" +
+        "Com senha: formato do openssl enc / .enc do Quimera (AES-256-CBC, PBKDF2-HMAC-SHA512, 1.000.000 de iterações).\n\n" +
+        "Bibliotecas: .NET, Avalonia (MIT), Pkcs11Interop (Apache 2.0).\n" +
+        "Ferramenta consultiva. Não use para informação classificada (Decreto 7.845/2012).",
+        "Sobre o CifraToken");
+}
 
-    static string? LerConfig()
-    {
-        try { return File.Exists(ArquivoConfig) ? File.ReadAllText(ArquivoConfig).Trim() : null; }
-        catch (IOException) { return null; }
-    }
-
-    static void GravarConfig(string caminho)
-    {
-        try
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(ArquivoConfig)!);
-            File.WriteAllText(ArquivoConfig, caminho);
-        }
-        catch (IOException) { }
-    }
-
-    void Status(string texto) => status.Text = texto;
-
-    void Erro(string texto)
-    {
-        Status(texto.Split('\n')[0]);
-        MessageBox.Show(this, texto, "CifraToken", MessageBoxButtons.OK, MessageBoxIcon.Error);
-    }
+/// <summary>Telas que precisam se atualizar quando aparecem.</summary>
+interface IAoMostrar
+{
+    void AoMostrar();
 }

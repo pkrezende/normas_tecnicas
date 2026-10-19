@@ -122,3 +122,44 @@ public class CmsCifraTestes
         public override void ImportParameters(RSAParameters parameters) => throw new NotSupportedException();
     }
 }
+
+public class SenhaEContatosTestes
+{
+    [Fact]
+    public void SenhaIdaEVolta()
+    {
+        var dados = RandomNumberGenerator.GetBytes(5000);
+        var enc = SenhaOpenSsl.Cifrar(dados, "Frase-Senha de teste 2026!");
+        Assert.True(SenhaOpenSsl.EhFormatoOpenSsl(enc));
+        Assert.Equal(dados, SenhaOpenSsl.Decifrar(enc, "Frase-Senha de teste 2026!"));
+        Assert.Throws<CryptographicException>(() => SenhaOpenSsl.Decifrar(enc, "senha errada"));
+    }
+
+    [Fact]
+    public void ForcaDaSenha()
+    {
+        Assert.Equal(0, SenhaOpenSsl.Forca("abc"));
+        Assert.Equal(4, SenhaOpenSsl.Forca("Frase-Senha de teste 2026!"));
+    }
+
+    [Fact]
+    public void ContatosGuardamSoAParteePublica()
+    {
+        var pasta = Path.Combine(Path.GetTempPath(), "contatos-" + Guid.NewGuid());
+        try
+        {
+            using var rsa = RSA.Create(2048);
+            using var cert = new CertificateRequest("CN=Fulano de Tal", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1)
+                .CreateSelfSigned(DateTimeOffset.Now, DateTimeOffset.Now.AddDays(1));
+            var agenda = new Contatos(pasta);
+            Assert.True(agenda.Adicionar(cert));
+            Assert.False(agenda.Adicionar(cert));
+            var lido = Assert.Single(agenda.Todos());
+            Assert.Equal(cert.Thumbprint, lido.Thumbprint);
+            Assert.False(lido.HasPrivateKey);
+            agenda.Remover(lido);
+            Assert.Empty(agenda.Todos());
+        }
+        finally { Directory.Delete(pasta, true); }
+    }
+}

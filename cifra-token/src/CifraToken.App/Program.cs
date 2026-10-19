@@ -1,11 +1,13 @@
+using Avalonia;
+
 namespace CifraToken.App;
 
 static class Program
 {
     [STAThread]
-    static void Main(string[] args)
-    {
-        ApplicationConfiguration.Initialize();
-        Application.Run(new JanelaPrincipal(args.FirstOrDefault()));
-    }
+    public static void Main(string[] args) =>
+        BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+
+    public static AppBuilder BuildAvaloniaApp() =>
+        AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont();
 }

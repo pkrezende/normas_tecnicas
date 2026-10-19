@@ -15,21 +15,66 @@ public sealed record CertificadoNoToken(X509Certificate2 Certificado, byte[] Id,
 /// </summary>
 public sealed class TokenPkcs11 : IDisposable
 {
-    /// <summary>Bibliotecas PKCS#11 conhecidas, testadas na ordem quando o usuário não escolhe uma.</summary>
-    public static readonly string[] BibliotecasConhecidas =
+    /// <summary>Bibliotecas PKCS#11 conhecidas (fabricante, caminho), testadas na ordem quando o usuário não escolhe uma.</summary>
+    public static readonly (string Fabricante, string Caminho)[] BibliotecasConhecidas =
     {
-        @"C:\Windows\System32\DXSafePKCS11.dll",          // Dexon DXSafe
-        @"C:\Windows\System32\eTPKCS11.dll",              // SafeNet / Thales eToken
-        @"C:\Windows\System32\aetpkss1.dll",              // Giesecke+Devrient SafeSign
-        @"C:\Windows\System32\WDPKCS.dll",                // Watchdata
-        @"C:\Windows\System32\ngp11v211.dll",             // Feitian / ePass
-        @"C:\Program Files\Gemalto\IDGo 800 PKCS11\IDPrimePKCS1164.dll",
-        @"C:\Windows\System32\opensc-pkcs11.dll",
-        "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so",
-        "/usr/lib/softhsm/libsofthsm2.so",
+        ("Dexon DXSafe", @"C:\Windows\System32\DXSafePKCS11.dll"),
+        ("G+D SafeSign", @"C:\Windows\System32\aetpkss1.dll"),
+        ("SafeNet / Thales eToken", @"C:\Windows\System32\eTPKCS11.dll"),
+        ("Watchdata", @"C:\Windows\System32\WDPKCS.dll"),
+        ("Watchdata (CCID)", @"C:\Windows\System32\WDICP_P11_CCID_v34.dll"),
+        ("Thales / Gemalto IDPrime", @"C:\Program Files\Gemalto\IDGo 800 PKCS11\IDPrimePKCS1164.dll"),
+        ("Thales / Gemalto IDPrime", @"C:\Program Files (x86)\Gemalto\IDGo 800 PKCS11\IDPrimePKCS11.dll"),
+        ("Gemalto GemSafe", @"C:\Windows\System32\gclib.dll"),
+        ("Oberthur / IDEMIA", @"C:\Windows\System32\OcsCryptoki.dll"),
+        ("Oberthur / IDEMIA AWP", @"C:\Program Files (x86)\Oberthur Technologies\AWP\DLLs\OcsCryptolib_P11.dll"),
+        ("Feitian ePass", @"C:\Windows\System32\ngp11v211.dll"),
+        ("Serpro", @"C:\Windows\System32\SerproPkcs11.dll"),
+        ("ACS", @"C:\Windows\System32\acospkcs11.dll"),
+        ("OpenSC", @"C:\Program Files\OpenSC Project\OpenSC\pkcs11\opensc-pkcs11.dll"),
+        ("OpenSC", @"C:\Windows\System32\opensc-pkcs11.dll"),
+        ("OpenSC", "/usr/lib/x86_64-linux-gnu/opensc-pkcs11.so"),
+        ("SoftHSM (testes)", "/usr/lib/softhsm/libsofthsm2.so"),
     };
 
+    /// <summary>
+    /// Drivers instalados neste computador: os conhecidos e qualquer outra DLL com "pkcs11" ou "p11" no nome
+    /// na pasta do sistema. Num aplicativo de 32 bits o Windows mostra o SysWOW64 no lugar do System32.
+    /// </summary>
+    public static List<(string Fabricante, string Caminho)> BibliotecasInstaladas()
+    {
+        var achadas = BibliotecasConhecidas.Where(b => File.Exists(b.Caminho))
+            .GroupBy(b => b.Caminho, StringComparer.OrdinalIgnoreCase).Select(g => g.First()).ToList();
+        if (OperatingSystem.IsWindows())
+        {
+            try
+            {
+                var sistema = Environment.GetFolderPath(Environment.SpecialFolder.System);
+                foreach (var dll in Directory.EnumerateFiles(sistema, "*.dll"))
+                {
+                    var nome = Path.GetFileName(dll).ToLowerInvariant();
+                    if ((nome.Contains("pkcs11") || nome.Contains("p11") || nome.Contains("cryptoki"))
+                        && !achadas.Any(a => a.Caminho.Equals(dll, StringComparison.OrdinalIgnoreCase)))
+                        achadas.Add(("Outro", dll));
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        }
+        return achadas;
+    }
+
+    public static string? PrimeiraBibliotecaInstalada() => BibliotecasInstaladas().Select(b => b.Caminho).FirstOrDefault();
+
     static readonly Pkcs11InteropFactories Fabricas = new();
+
+    static TokenPkcs11()
+    {
+        // O Pkcs11Interop procura "libdl", que o glibc 2.34+ só instala como libdl.so.2 (no Windows não se aplica).
+        if (OperatingSystem.IsLinux())
+            System.Runtime.InteropServices.NativeLibrary.SetDllImportResolver(typeof(Pkcs11InteropFactories).Assembly,
+                (nome, assembly, caminhos) =>
+                    nome == "libdl" && System.Runtime.InteropServices.NativeLibrary.TryLoad("libdl.so.2", out var h) ? h : IntPtr.Zero);
+    }
     readonly IPkcs11Library biblioteca;
     readonly List<ISession> sessoes = new();
 
@@ -40,8 +85,6 @@ public sealed class TokenPkcs11 : IDisposable
         Caminho = caminhoBiblioteca;
         biblioteca = Fabricas.Pkcs11LibraryFactory.LoadPkcs11Library(Fabricas, caminhoBiblioteca, AppType.MultiThreaded);
     }
-
-    public static string? PrimeiraBibliotecaInstalada() => BibliotecasConhecidas.FirstOrDefault(File.Exists);
 
     /// <summary>Tokens conectados e inicializados, na ordem dos slots.</summary>
     public List<ISlot> Tokens() => biblioteca.GetSlotList(SlotsType.WithTokenPresent)

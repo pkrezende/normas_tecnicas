@@ -1,7 +1,8 @@
 # CifraToken
 
-Aplicativo para Windows que cifra e decifra arquivos com o certificado digital ICP-Brasil guardado no
-token (testado para o uso com o token Dexon / middleware DXSafe, gerenciado pelo Token Admin).
+Aplicativo para Windows e Linux que cifra e decifra arquivos com o certificado digital ICP-Brasil guardado
+no token de qualquer fabricante (Dexon, G+D SafeSign, SafeNet e outros, pelo driver PKCS#11), num arquivo
+.pfx ou com frase-senha. Usa só algoritmos abertos.
 
 - O arquivo é cifrado com **AES-256-CBC** e a chave de sessão com o **RSA** de cada destinatário, no formato
   **CMS EnvelopedData** (RFC 5652, o mesmo do S/MIME). A saída é um `.p7m`.
@@ -15,46 +16,57 @@ token (testado para o uso com o token Dexon / middleware DXSafe, gerenciado pelo
 
 ## Onde baixar
 
-Na aba **Actions** do repositório, abra a execução mais recente do fluxo **CifraToken** e baixe o artefato
-`CifraToken-windows`. Ele traz duas pastas:
+Em **Releases** no repositório (coluna da direita), na versão mais recente, em **Assets**:
 
-| Pasta | Quando usar |
+| Arquivo | Quando usar |
 |---|---|
-| `CifraToken-win-x64` | Windows 64 bits com o driver do token de 64 bits (o normal) |
-| `CifraToken-win-x86` | Se o driver do token só existir em 32 bits (em `C:\Windows\SysWOW64`) |
+| `CifraToken-win-x64.zip` | Windows 64 bits com driver do token de 64 bits (o normal) |
+| `CifraToken-win-x86.zip` | Windows, se o driver do token só existir em 32 bits (em `C:\Windows\SysWOW64`) |
+| `CifraToken-linux-x64.tar.gz` | Linux 64 bits |
 
-Cada pasta tem `CifraToken.exe` (janela) e `cifratoken.exe` (linha de comando). Não precisa instalar o .NET.
-Como o executável não é assinado, o Windows SmartScreen pode avisar na primeira execução ("Mais informações" > "Executar assim mesmo").
+Cada pacote tem `CifraToken` (janela) e `cifratoken` (linha de comando). Não precisa instalar o .NET.
+No Windows, o SmartScreen pode avisar na primeira execução ("Mais informações" > "Executar assim mesmo").
 
-## Primeiro uso com o token Dexon
+## Telas
 
-1. Instale o **DXSafe Middleware** da Dexon (o mesmo que acompanha o Token Admin) e conecte o token.
-2. Abra o `CifraToken.exe`. No topo, em **Driver do token (PKCS#11)**, deve aparecer
-   `C:\Windows\System32\DXSafePKCS11.dll`. Se não aparecer, clique em **Escolher...** e aponte para a DLL.
-3. Clique em **Testar token**. A lista deve mostrar o seu certificado (não pede PIN).
+A interface segue o fluxo do Quimera: barra de comandos à esquerda (o botão de menu recolhe e expande),
+lista de arquivos à esquerda e opções à direita, com **Ok** e **Cancelar** embaixo.
 
-Se a DLL tiver outro nome no seu computador, procure em `C:\Windows\System32` e `C:\Windows\SysWOW64`
-arquivos com `pkcs11` no nome. O mesmo caminho é o que se configura no Quimera (Preferências > Credencial).
+![Cifrar](docs/telas/cifrar.png)
 
-## Cifrar
+## Primeiro uso
 
-1. Aba **Cifrar**: escolha (ou arraste) o arquivo.
-2. **Do token / Windows...**: escolha o seu certificado e os de outros destinatários. Também dá para usar
-   **De arquivo .cer...** com o certificado público de quem vai receber.
-3. **Cifrar e salvar .p7m**. O original não é apagado.
+1. Instale o middleware do seu token (Dexon DXSafe, G+D SafeSign, SafeNet, Watchdata etc.) e conecte o token.
+2. Abra o CifraToken > **Preferências** > **Credencial**. Em "Driver para acesso ao token", escolha o driver
+   na lista dos encontrados (ou **Procurar...** para indicar outra DLL) e clique em **Testar a conexão**
+   (lê os certificados sem pedir PIN). No Windows também dá para usar o **repositório de certificados do Windows**,
+   e em qualquer sistema um **arquivo PFX** (A1).
+3. Em **Contatos e Certificados**, clique em **Adicionar meu certificado** e importe o `.cer` de quem vai
+   receber arquivos (por exemplo, o certificado de contingência do setor). Use **Exportar .cer** para mandar o
+   seu certificado público a quem vai cifrar para você.
 
-O RSA-OAEP é opcional e só deve ser marcado se o token de todos os destinatários suportar.
+| Driver | Arquivo |
+|---|---|
+| Dexon DXSafe | `DXSafePKCS11.dll` |
+| G+D SafeSign | `aetpkss1.dll` |
+| SafeNet / Thales eToken | `eTPKCS11.dll` |
+| Watchdata | `WDPKCS.dll` |
+| Linux (OpenSC e outros) | `opensc-pkcs11.so` ou o `.so` do fabricante |
 
-## Decifrar
+## Cifrar Arquivos
 
-1. Aba **Decifrar**: escolha o `.p7m`. A janela mostra para quais certificados ele foi cifrado.
-2. Escolha onde está a sua chave:
-   - **Token pelo driver PKCS#11** (recomendado): o CifraToken pede o PIN e o token faz a operação.
-     Se o token avisar que restam poucas tentativas, o aviso aparece antes do PIN.
-   - **Token ou certificado publicado no Windows**: usa o certificado que o middleware publica em
-     "Pessoal" (certmgr.msc); o próprio middleware pede o PIN.
-   - **Arquivo A1 (.pfx)**.
-3. **Decifrar e salvar**.
+Adicione os arquivos (botão **+** ou arrastando). Com as setas da faixa cinza, escolha:
+- **Cifrar para Destinatários**: marque os contatos (inclua você mesmo). Gera `ARQUIVO.p7m`.
+- **Cifrar com Senha**: frase-senha forte (14+ caracteres). Gera `ARQUIVO.enc`, que abre no Quimera e no openssl.
+
+Os cifrados são salvos ao lado dos originais, que não são apagados.
+
+## Decifrar Arquivos
+
+Adicione os `.p7m` e `.enc`. Para os `.enc`, digite a senha. Para os `.p7m`, digite o PIN e clique em
+**Conectar** (se o token avisar que restam poucas tentativas, o aviso aparece antes). Clique em **Ok**:
+os decifrados são salvos na mesma pasta, com o nome original. Por padrão a sessão do token é encerrada
+após cada uso (Preferências).
 
 ## Linha de comando
 
@@ -64,6 +76,8 @@ cifratoken cifrar -i doc.pdf -o doc.pdf.p7m --do-token -r contingencia.cer
 cifratoken decifrar -i doc.pdf.p7m -o doc.pdf --pkcs11
 cifratoken destinatarios -i doc.pdf.p7m
 cifratoken decifrar -i doc.pdf.p7m -o doc.pdf --pfx meu.pfx
+cifratoken cifrar-senha -i doc.pdf -o doc.pdf.enc       # formato .enc do Quimera / openssl enc
+cifratoken decifrar-senha -i doc.pdf.enc -o doc.pdf
 ```
 O PIN é pedido na tela (ou lido de `CIFRATOKEN_PIN`, apenas para testes automatizados).
 
@@ -72,8 +86,8 @@ O PIN é pedido na tela (ou lido de `CIFRATOKEN_PIN`, apenas para testes automat
 | Com | Situação |
 |---|---|
 | `openssl cms` (Linux/Windows) | compatível nos dois sentidos, DER ou PEM, RSA PKCS#1 v1.5 e OAEP |
-| Quimera (Marinha) `.acq` | **não** compatível: o Quimera usa formato próprio para cifrar para destinatários |
-| Quimera `.enc` (senha) | não se aplica: o CifraToken não cifra com senha |
+| `openssl enc` e Quimera `.enc` (senha) | compatível nos dois sentidos (AES-256-CBC, PBKDF2-SHA512, 1.000.000 de iterações) |
+| Quimera (Marinha) `.acq` | **não** compatível: formato próprio do Quimera para destinatários |
 
 ## Limites conhecidos
 
@@ -85,15 +99,16 @@ O PIN é pedido na tela (ou lido de `CIFRATOKEN_PIN`, apenas para testes automat
 
 Automaticamente, a cada alteração (GitHub Actions):
 - interoperabilidade com o `openssl cms` (2 destinatários, DER e PEM, PKCS#1 e OAEP, chave errada recusada);
+- cifra com senha contra o `openssl enc` com os parâmetros do Quimera;
 - token simulado (SoftHSM) por PKCS#11: listar, decifrar, cifrar com o certificado do token, PIN errado;
 - no Windows: decifrar pelo repositório "Pessoal" e pelo caminho que o token usa.
 
-**Ainda não testado com o token Dexon físico.** Esse teste precisa ser feito no seu computador.
+**Ainda não testado com tokens físicos (Dexon, SafeSign).** Esse teste precisa ser feito no seu computador.
 
 ## Código
 
-- `src/CifraToken.Core`: CMS (`CmsCifra.cs`), acesso ao token por PKCS#11 (`TokenPkcs11.cs`, com a
+- `src/CifraToken.Core`: CMS (`CmsCifra.cs`), senha (`SenhaOpenSsl.cs`), contatos, acesso ao token por PKCS#11 (`TokenPkcs11.cs`, com a
   biblioteca [Pkcs11Interop](https://github.com/Pkcs11Interop/Pkcs11Interop)) e ao repositório do Windows.
-- `src/CifraToken.App`: janela (Windows Forms, .NET 8).
+- `src/CifraToken.App`: janela (Avalonia, roda no Windows e no Linux).
 - `src/CifraToken.Cli`: linha de comando.
 - `tests/`: testes de unidade e `interop.sh` (openssl + SoftHSM).

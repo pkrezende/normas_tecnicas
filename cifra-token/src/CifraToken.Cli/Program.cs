@@ -6,6 +6,8 @@ const string Uso = """
 Uso:
   cifratoken cifrar -i ARQUIVO -o SAIDA.p7m (-r CERT.cer | -t IMPRESSAO_DIGITAL | --do-token)... [--oaep]
   cifratoken decifrar -i ARQUIVO.p7m -o SAIDA [--pfx MEU.pfx | --pkcs11 [BIBLIOTECA]]
+  cifratoken cifrar-senha -i ARQUIVO -o SAIDA.enc
+  cifratoken decifrar-senha -i ARQUIVO.enc -o SAIDA
   cifratoken destinatarios -i ARQUIVO.p7m
   cifratoken listar [--pkcs11 [BIBLIOTECA]]
 
@@ -15,6 +17,8 @@ Uso:
   --pfx  decifra com um A1 (.pfx/.p12); a senha vem da variável CIFRATOKEN_SENHA ou é pedida
   --pkcs11  fala direto com o token pela biblioteca do fabricante (Dexon: DXSafePKCS11.dll);
          sem caminho, procura as bibliotecas conhecidas. O PIN vem de CIFRATOKEN_PIN ou é pedido.
+  cifrar-senha/decifrar-senha: formato .enc do Quimera e do openssl enc (AES-256-CBC, PBKDF2-SHA512,
+         1.000.000 de iterações); a frase-senha vem de CIFRATOKEN_SENHA ou é pedida
   Sem --pfx, a chave é procurada no repositório "Pessoal" (onde o middleware do token
   registra o certificado) e o middleware pede o PIN.
 """;
@@ -86,6 +90,20 @@ try
             else
                 claro = CmsCifra.Decifrar(p7m, chaves);
             File.WriteAllBytes(Obrigatoria("-o"), claro);
+            Console.WriteLine($"Decifrado: {Obrigatoria("-o")}");
+            return 0;
+        }
+        case "cifrar-senha":
+        {
+            var senha = Environment.GetEnvironmentVariable("CIFRATOKEN_SENHA") ?? LerSenha("Frase-senha: ");
+            File.WriteAllBytes(Obrigatoria("-o"), SenhaOpenSsl.Cifrar(File.ReadAllBytes(Obrigatoria("-i")), senha));
+            Console.WriteLine($"Cifrado com senha: {Obrigatoria("-o")}");
+            return 0;
+        }
+        case "decifrar-senha":
+        {
+            var senha = Environment.GetEnvironmentVariable("CIFRATOKEN_SENHA") ?? LerSenha("Frase-senha: ");
+            File.WriteAllBytes(Obrigatoria("-o"), SenhaOpenSsl.Decifrar(File.ReadAllBytes(Obrigatoria("-i")), senha));
             Console.WriteLine($"Decifrado: {Obrigatoria("-o")}");
             return 0;
         }

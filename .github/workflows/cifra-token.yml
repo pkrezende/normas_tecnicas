@@ -24,9 +24,23 @@ jobs:
       - run: dotnet test tests/CifraToken.Testes
       - run: dotnet build src/CifraToken.Cli -c Release
       - run: tests/interop.sh "$PWD/src/CifraToken.Cli/bin/Release/net8.0/cifratoken"
+      - name: Gerar executáveis para Linux
+        run: |
+          out=publicado/CifraToken-linux-x64
+          dotnet publish src/CifraToken.App -c Release -r linux-x64 --self-contained true \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o $out
+          dotnet publish src/CifraToken.Cli -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o $out
+          cp LEIA-ME.md $out/ && rm -f $out/*.pdb
+          tar -C publicado -czf publicado/CifraToken-linux-x64.tar.gz CifraToken-linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CifraToken-linux
+          path: cifra-token/publicado/CifraToken-linux-x64.tar.gz
+          retention-days: 30
 
   windows:
     name: Testes e executáveis (Windows)
+    needs: linux-openssl
     runs-on: windows-latest
     permissions:
       contents: write   # para publicar a Release com os .zip
@@ -66,6 +80,10 @@ jobs:
           CIFRATOKEN_SENHA=x $CLI decifrar -i u.p7m -o u.txt --pfx k.pfx
           cmp t.txt u.txt
           rm -f k.pem k.pfx
+      - uses: actions/download-artifact@v4
+        with:
+          name: CifraToken-linux
+          path: cifra-token/publicado
       - uses: actions/upload-artifact@v4
         with:
           name: CifraToken-windows
@@ -81,9 +99,10 @@ jobs:
           foreach ($rid in "win-x64", "win-x86") {
             Compress-Archive -Path "publicado/CifraToken-$rid/*" -DestinationPath "publicado/CifraToken-$rid.zip"
           }
-          $notas = "Executáveis do CifraToken para Windows (não precisam de instalação).`n`n" +
+          $notas = "Executáveis do CifraToken (não precisam de instalação).`n`n" +
                    "- CifraToken-win-x64.zip: Windows 64 bits (o normal).`n" +
-                   "- CifraToken-win-x86.zip: use se o driver do token só existir em 32 bits.`n`n" +
-                   "Descompacte e abra CifraToken.exe. Instruções em LEIA-ME.md, dentro do .zip."
-          gh release create $tag publicado/CifraToken-win-x64.zip publicado/CifraToken-win-x86.zip `
+                   "- CifraToken-win-x86.zip: Windows, se o driver do token só existir em 32 bits.`n" +
+                   "- CifraToken-linux-x64.tar.gz: Linux 64 bits.`n`n" +
+                   "Descompacte e abra CifraToken (CifraToken.exe no Windows). Instruções em LEIA-ME.md, dentro do pacote."
+          gh release create $tag publicado/CifraToken-win-x64.zip publicado/CifraToken-win-x86.zip publicado/CifraToken-linux-x64.tar.gz `
             --target "${{ github.sha }}" --title "CifraToken 0.1.${{ github.run_number }}" --notes $notas --latest
