@@ -18,6 +18,12 @@ sealed class Configuracao
     public bool EncerrarSessaoAposUso { get; set; } = true;
     public bool UsarOaep { get; set; }
     public string PastaContatos { get; set; } = Contatos.PastaPadrao;
+    /// <summary>"" (sem política), "AD-RB" ou "AD-RT" (DOC-ICP-15.03), ou o caminho de um .der.</summary>
+    public string PoliticaAssinatura { get; set; } = "AD-RB";
+    public bool UsarCarimbo { get; set; }
+    public string UrlAct { get; set; } = CarimboTempo.UrlActDefesa;
+    /// <summary>OID da política da ACT a pedir no carimbo (vazio: a ACT usa a padrão).</summary>
+    public string PoliticaAct { get; set; } = "";
 
     public static Configuracao Ler()
     {

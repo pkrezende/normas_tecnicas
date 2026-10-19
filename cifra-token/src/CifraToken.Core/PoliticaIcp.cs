@@ -37,6 +37,15 @@ public sealed record PoliticaIcp(string Nome, string Oid, string Url, HashAlgori
                                 || Url.Contains("_AD_RT", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Lê o arquivo .der da política e confere o resumo interno (signPolicyHash) com o calculado.</summary>
+    /// <summary>"AD-RB v2.4 (2.16.76.1.7.1.1.2.4)" para os OIDs CAdES da ICP-Brasil; senão, o próprio OID.</summary>
+    public static string Descrever(string oid)
+    {
+        var tipo = oid.StartsWith("2.16.76.1.7.1.1.", StringComparison.Ordinal) ? "AD-RB"
+                 : oid.StartsWith("2.16.76.1.7.1.2.", StringComparison.Ordinal) ? "AD-RT" : null;
+        var arcos = oid.Split('.');
+        return tipo is null || arcos.Length != 9 ? oid : $"{tipo} v{arcos[7]}.{arcos[8]} da ICP-Brasil ({oid})";
+    }
+
     public static PoliticaIcp Ler(byte[] der, string nome, string url)
     {
         var leitor = new AsnReader(der, AsnEncodingRules.DER);

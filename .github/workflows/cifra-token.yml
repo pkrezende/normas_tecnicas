@@ -24,6 +24,12 @@ jobs:
       - run: dotnet test tests/CifraToken.Testes
       - run: dotnet build src/CifraToken.Cli -c Release
       - run: tests/interop.sh "$PWD/src/CifraToken.Cli/bin/Release/net10.0/cifratoken"
+      - name: Baixar e conferir as Políticas de Assinatura v2.4 do ITI
+        continue-on-error: true  # depende do site do ITI estar no ar
+        run: |
+          CLI=src/CifraToken.Cli/bin/Release/net10.0/cifratoken
+          $CLI politica AD-RB | tee rb.txt && grep -q "2.16.76.1.7.1.1.2.4" rb.txt
+          $CLI politica AD-RT | tee rt.txt && grep -q "2.16.76.1.7.1.2.2.4" rt.txt
       - name: Gerar executáveis para Linux
         run: |
           out=publicado/CifraToken-linux-x64
@@ -95,14 +101,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "cifratoken-v0.1.${{ github.run_number }}"
+          # versão do app (CifraToken.App.csproj) + número da compilação, para cada envio virar uma Release
+          $versao = (Select-Xml -Path src/CifraToken.App/CifraToken.App.csproj -XPath "//Version").Node.InnerText
+          $tag = "cifratoken-v$versao-${{ github.run_number }}"
           foreach ($rid in "win-x64", "win-x86") {
             Compress-Archive -Path "publicado/CifraToken-$rid/*" -DestinationPath "publicado/CifraToken-$rid.zip"
           }
-          $notas = "Executáveis do CifraToken (não precisam de instalação).`n`n" +
+          $notas = "Executáveis do CifraToken $versao (não precisam de instalação): cifrar, decifrar, assinar (CAdES ICP-Brasil com carimbo do tempo) e verificar.`n`n" +
                    "- CifraToken-win-x64.zip: Windows 64 bits (o normal).`n" +
                    "- CifraToken-win-x86.zip: Windows, se o driver do token só existir em 32 bits.`n" +
                    "- CifraToken-linux-x64.tar.gz: Linux 64 bits.`n`n" +
                    "Descompacte e abra CifraToken (CifraToken.exe no Windows). Instruções em LEIA-ME.md, dentro do pacote."
           gh release create $tag publicado/CifraToken-win-x64.zip publicado/CifraToken-win-x86.zip publicado/CifraToken-linux-x64.tar.gz `
-            --target "${{ github.sha }}" --title "CifraToken 0.1.${{ github.run_number }}" --notes $notas --latest
+            --target "${{ github.sha }}" --title "CifraToken $versao (compilação ${{ github.run_number }})" --notes $notas --latest

@@ -29,6 +29,8 @@ static class Icones
     public const string Proximo = "M8.6,16.6L10,18L16,12L10,6L8.6,7.4L13.2,12Z";
     public const string Exportar = "M5,20H19V18H5Z M11,4H13V12H16L12,16L8,12H11Z";
     public const string Pasta = "M3,5H10L12,7H21V19H3Z";
+    public const string Caneta = "M3,17.2V21H6.8L17.8,10L14,6.2Z M20.7,7A1,1 0 0 0 20.7,5.6L18.4,3.3A1,1 0 0 0 17,3.3L15.2,5.1L19,8.9Z M3,22H21V23H3Z";
+    public const string Selo = Anel + " M10.5,16.5L6.5,12.5L7.9,11.1L10.5,13.7L16.1,8.1L17.5,9.5Z";
     public const string Token = "M7,3H17V14H7Z M9,14H15V21H9Z M10,5H14V8H10Z";
 
     public static PathIcon Criar(string dados, double tamanho = 18) => new()

@@ -86,6 +86,23 @@ sealed class Credencial : IDisposable
             "o arquivo pode ter sido cifrado para o anterior.");
     }
 
+    /// <summary>Certificados que podem assinar (uso de chave digitalSignature ou nonRepudiation) e têm chave acessível.</summary>
+    public List<X509Certificate2> CertificadosAssinatura()
+    {
+        var lista = cfg.Modo == ModoCredencial.Windows
+            ? Repositorio.Pessoais().Where(c => c.HasPrivateKey)
+            : chaves.Select(c => c.Cert);
+        return lista.Where(PodeAssinar).OrderByDescending(c => c.NotAfter).ToList();
+    }
+
+    /// <summary>Chave do certificado conectado; nula no modo Windows (o .NET usa a do repositório e o middleware pede o PIN).</summary>
+    public RSA? ChaveDe(X509Certificate2 cert) => cfg.Modo == ModoCredencial.Windows
+        ? null
+        : chaves.First(c => c.Cert.Thumbprint == cert.Thumbprint).Chave;
+
+    static bool PodeAssinar(X509Certificate2 c) => c.Extensions.OfType<X509KeyUsageExtension>()
+        .All(k => k.KeyUsages.HasFlag(X509KeyUsageFlags.DigitalSignature) || k.KeyUsages.HasFlag(X509KeyUsageFlags.NonRepudiation));
+
     /// <summary>Certificados da credencial que podem ser lidos sem PIN (para cadastrar a si mesmo como contato).</summary>
     public List<X509Certificate2> CertificadosPublicos()
     {

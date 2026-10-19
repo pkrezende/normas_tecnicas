@@ -30,7 +30,7 @@ public static class AssinaturaCades
     /// </summary>
     public static async Task<byte[]> Assinar(byte[] conteudo, X509Certificate2 certificado, RSA? chave,
         PoliticaIcp? politica, string? urlAct, HttpClient? http, IEnumerable<X509Certificate2>? cadeia = null,
-        string? politicaAct = null, CancellationToken ct = default)
+        string? politicaAct = null, bool silencioso = true, CancellationToken ct = default)
     {
         if (politica?.ExigeCarimbo == true && string.IsNullOrWhiteSpace(urlAct))
             throw new ArgumentException("A política AD-RT exige carimbo do tempo: configure o endereço da ACT.");
@@ -50,7 +50,7 @@ public static class AssinaturaCades
         else
             signer.SignedAttributes.Add(new Pkcs9SigningTime(DateTime.UtcNow));
 
-        cms.ComputeSignature(signer, silent: true);
+        cms.ComputeSignature(signer, silencioso);
 
         if (!string.IsNullOrWhiteSpace(urlAct))
         {

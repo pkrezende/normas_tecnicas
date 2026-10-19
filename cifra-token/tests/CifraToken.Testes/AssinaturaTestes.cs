@@ -21,6 +21,12 @@ public class AssinaturaTestes
     }
 
     /// <summary>Arquivo oficial da PA AD-RB v2.3 do ITI: OID e resumo interno (signPolicyHash).</summary>
+    [Theory]
+    [InlineData("2.16.76.1.7.1.1.2.4", "AD-RB v2.4 da ICP-Brasil (2.16.76.1.7.1.1.2.4)")]
+    [InlineData("2.16.76.1.7.1.2.2.3", "AD-RT v2.3 da ICP-Brasil (2.16.76.1.7.1.2.2.3)")]
+    [InlineData("1.2.3.4", "1.2.3.4")]
+    public void DescrevePolitica(string oid, string esperado) => Assert.Equal(esperado, PoliticaIcp.Descrever(oid));
+
     [Fact]
     public void LePoliticaOficialAdRb()
     {

@@ -172,7 +172,7 @@ try
             var v = AssinaturaCades.Verificar(File.ReadAllBytes(entrada), File.ReadAllBytes(Opcao("-s") ?? entrada + ".p7s"));
             Console.WriteLine(v.Integra ? "ASSINATURA ÍNTEGRA" : "ASSINATURA INVÁLIDA" + (v.Erro is null ? "" : ": " + v.Erro));
             Console.WriteLine($"Signatário: {v.Signatario}");
-            if (v.Politica is not null) Console.WriteLine($"Política: {v.Politica}");
+            if (v.Politica is not null) Console.WriteLine($"Política: {PoliticaIcp.Descrever(v.Politica)}");
             if (v.Carimbo is not null)
                 Console.WriteLine($"Carimbo do tempo: {v.Carimbo:dd/MM/yyyy HH:mm:ss} UTC por {v.Act} ({(v.CarimboValido == true ? "íntegro" : "INVÁLIDO")})");
             if (v.CadeiaStatus is not null) Console.WriteLine(v.CadeiaStatus);

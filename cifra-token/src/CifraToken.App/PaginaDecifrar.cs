@@ -16,11 +16,7 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
     readonly TextBlock aviso = new() { TextWrapping = TextWrapping.Wrap };
     readonly TextBox senha = new() { PasswordChar = '•' };
     readonly Border grupoSenha;
-    readonly TextBlock rotuloPin = Ui.Rotulo("PIN para acesso à credencial:");
-    readonly TextBox pin = new() { PasswordChar = '•' };
-    readonly Button conectar;
-    readonly TextBox acessada = new() { IsReadOnly = true };
-    readonly TextBlock notaWindows = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = 0.8 };
+    readonly PainelCredencial credencial;
     readonly Border grupoToken;
 
     protected override (string Nome, string[] Padroes)[] Filtros => new[]
@@ -38,39 +34,14 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
             Spacing = 4, Children = { Ui.Rotulo("Digite a senha para decifrar o(s) arquivo(s):"), senha, mostrarSenha },
         });
 
-        conectar = Ui.BotaoSimples("Conectar", () => _ = Conectar());
-        conectar.VerticalAlignment = VerticalAlignment.Stretch;
-        conectar.Margin = new Thickness(8, 0, 0, 0);
-        var linhaPin = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto") };
-        linhaPin.Children.Add(pin);
-        Grid.SetColumn(conectar, 1);
-        linhaPin.Children.Add(conectar);
-        var mostrarPin = new CheckBox { Content = "Mostrar senha" };
-        mostrarPin.IsCheckedChanged += (_, _) => pin.PasswordChar = mostrarPin.IsChecked == true ? '\0' : '•';
-        pin.KeyDown += (_, e) => { if (e.Key == Avalonia.Input.Key.Enter) _ = Conectar(); };
-        grupoToken = Ui.Grupo("Arquivo(s) cifrado(s) para destinatário(s)", new StackPanel
-        {
-            Spacing = 4,
-            Children = { rotuloPin, linhaPin, mostrarPin, Ui.Rotulo("Credencial criptográfica acessada:"), acessada, notaWindows },
-        });
+        credencial = new PainelCredencial(amb, (t, e) => Informar(t, e), "decifrar");
+        grupoToken = Ui.Grupo("Arquivo(s) cifrado(s) para destinatário(s)", credencial);
 
         Direita.Content = new StackPanel { Spacing = 4, Children = { aviso, grupoSenha, grupoToken } };
-        amb.Mudou += AtualizarCredencial;
-        AtualizarCredencial();
         ArquivosMudaram();
     }
 
-    public void AoMostrar() => AtualizarCredencial();
-
-    void AtualizarCredencial()
-    {
-        var c = Amb.Credencial;
-        rotuloPin.Text = c.RotuloSenha;
-        pin.IsEnabled = conectar.IsEnabled = c.PrecisaConectar;
-        acessada.Text = c.Conectada ? c.Descricao : "";
-        notaWindows.Text = c.PrecisaConectar ? "" :
-            "Modo repositório do Windows: o middleware do token pede o PIN no momento de decifrar. Para mudar, use Preferências > Credencial.";
-    }
+    public void AoMostrar() => credencial.Atualizar();
 
     protected override void ArquivosMudaram()
     {
@@ -85,36 +56,6 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
                 : comSenha > 0 ? "Os arquivos selecionados foram cifrados com senha."
                 : "Os arquivos selecionados foram cifrados para destinatários: conecte a sua credencial criptográfica.";
     }
-
-    async Task Conectar()
-    {
-        try
-        {
-            var alerta = await Task.Run(Amb.Credencial.AvisoPin);
-            if (alerta is not null && !await Ui.Confirmar(this, alerta + "\n\nContinuar?", "Atenção ao PIN")) return;
-            var p = pin.Text ?? "";
-            await Task.Run(() => Amb.Credencial.Conectar(p));
-            Informar("Credencial conectada: " + Amb.Credencial.Descricao);
-        }
-        catch (Exception e) when (e is CryptographicException or IOException or Net.Pkcs11Interop.Common.Pkcs11Exception
-                                      or Net.Pkcs11Interop.Common.UnmanagedException or DllNotFoundException or BadImageFormatException)
-        {
-            Informar(TextoErro(e), erro: true);
-        }
-        finally
-        {
-            pin.Text = "";
-            Amb.Avisar();
-        }
-    }
-
-    static string TextoErro(Exception e) => e switch
-    {
-        Net.Pkcs11Interop.Common.Pkcs11Exception p => TokenPkcs11.Mensagem(p.RV),
-        BadImageFormatException => "O driver do token é de outra arquitetura (32/64 bits). Use a outra versão do CifraToken (x86 ou x64).",
-        Net.Pkcs11Interop.Common.UnmanagedException or DllNotFoundException => "Não consegui carregar o driver do token: " + e.Message,
-        _ => e.Message,
-    };
 
     protected override void Limpar()
     {
@@ -155,7 +96,7 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or CryptographicException or FormatException
                                           or Net.Pkcs11Interop.Common.Pkcs11Exception)
             {
-                erros.Add($"{Path.GetFileName(arquivo)}: {TextoErro(e)}");
+                erros.Add($"{Path.GetFileName(arquivo)}: {PainelCredencial.TextoErro(e)}");
             }
         }
         Amb.DepoisDeUsar();

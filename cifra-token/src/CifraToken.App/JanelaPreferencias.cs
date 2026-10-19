@@ -6,7 +6,7 @@ using CifraToken.Core;
 
 namespace CifraToken.App;
 
-/// <summary>Preferências: credencial (token, Windows ou .pfx), criptografia e contatos.</summary>
+/// <summary>Preferências: credencial (token, Windows ou .pfx), criptografia, assinatura e contatos.</summary>
 sealed class JanelaPreferencias : Window
 {
     readonly Configuracao cfg;
@@ -19,6 +19,11 @@ sealed class JanelaPreferencias : Window
     readonly CheckBox encerrar = new() { Content = "Encerrar a sessão do token após cada uso (mais seguro em computadores compartilhados)" };
     readonly CheckBox oaep = new() { Content = "Usar RSA-OAEP por padrão ao cifrar para destinatários" };
     readonly TextBox pastaContatos = new();
+    readonly ComboBox politica = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    readonly CheckBox carimbo = new() { Content = "Incluir carimbo do tempo por padrão (obrigatório na AD-RT)" };
+    readonly TextBox urlAct = new();
+    readonly TextBox politicaAct = new() { Watermark = "vazio: a ACT usa a sua política padrão" };
+    static readonly string[] Politicas = { "AD-RB", "AD-RT", "" };
     readonly TextBlock resultadoTeste = new() { TextWrapping = TextWrapping.Wrap };
 
     public JanelaPreferencias(Configuracao cfg)
@@ -115,12 +120,52 @@ sealed class JanelaPreferencias : Window
             },
         };
 
+        politica.ItemsSource = new[] { "AD-RB: referência básica", "AD-RT: referência de tempo (com carimbo)", "Sem política (CMS simples)" };
+        politica.SelectedIndex = Math.Max(0, Array.IndexOf(Politicas, cfg.PoliticaAssinatura));
+        carimbo.IsChecked = cfg.UsarCarimbo;
+        urlAct.Text = cfg.UrlAct;
+        politicaAct.Text = cfg.PoliticaAct;
+        var assinatura = new StackPanel
+        {
+            Spacing = 6, Margin = new Thickness(12),
+            Children =
+            {
+                Ui.Rotulo("Política de Assinatura padrão (DOC-ICP-15.03):", negrito: true), politica,
+                new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap, Opacity = 0.75, FontSize = 11,
+                    Text = "As políticas CAdES v2.4 (AD-RB 2.16.76.1.7.1.1.2.4 e AD-RT 2.16.76.1.7.1.2.2.4) são baixadas de " +
+                           "politicas.icpbrasil.gov.br, conferidas pelo SHA-256 publicado e guardadas em " + PoliticaIcp.PastaCache + ".",
+                },
+                carimbo,
+                Ui.Rotulo("Endereço da ACT (RFC 3161):", negrito: true), urlAct,
+                new StackPanel
+                {
+                    Orientation = Orientation.Horizontal, Spacing = 8,
+                    Children = { Ui.BotaoSimples("Usar a ACT Defesa", () => { urlAct.Text = CarimboTempo.UrlActDefesa; politicaAct.Text = "2.16.76.1.6.15"; }) },
+                },
+                new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap, Opacity = 0.75, FontSize = 11,
+                    Text = "A ACT Defesa atende em " + CarimboTempo.UrlActDefesa + " (DPCT v1.0, item 4.2.5) e só aceita pedidos " +
+                           "das redes cadastradas do MD e das Forças (item 4.2.3). Fora delas, use outra ACT credenciada na ICP-Brasil.",
+                },
+                Ui.Rotulo("OID da política da ACT a pedir (opcional):", negrito: true), politicaAct,
+                new TextBlock
+                {
+                    TextWrapping = TextWrapping.Wrap, Opacity = 0.75, FontSize = 11,
+                    Text = "Política de Carimbo do Tempo da ACT Defesa: 2.16.76.1.6.15.",
+                },
+            },
+        };
+
         var abas = new TabControl
         {
             ItemsSource = new[]
             {
                 new TabItem { Header = "Credencial", FontSize = 14, Content = new ScrollViewer { Content = credencial } },
                 new TabItem { Header = "Criptografia", FontSize = 14, Content = criptografia },
+                new TabItem { Header = "Assinatura", FontSize = 14, Content = new ScrollViewer { Content = assinatura } },
                 new TabItem { Header = "Contatos", FontSize = 14, Content = contatos },
             },
         };
@@ -180,6 +225,10 @@ sealed class JanelaPreferencias : Window
         cfg.EncerrarSessaoAposUso = encerrar.IsChecked == true;
         cfg.UsarOaep = oaep.IsChecked == true;
         if (!string.IsNullOrWhiteSpace(pastaContatos.Text)) cfg.PastaContatos = pastaContatos.Text.Trim();
+        cfg.PoliticaAssinatura = Politicas[Math.Max(0, politica.SelectedIndex)];
+        cfg.UsarCarimbo = carimbo.IsChecked == true;
+        cfg.UrlAct = urlAct.Text?.Trim() ?? "";
+        cfg.PoliticaAct = politicaAct.Text?.Trim() ?? "";
         Close(cfg);
     }
 }

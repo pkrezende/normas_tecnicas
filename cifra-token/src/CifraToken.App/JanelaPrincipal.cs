@@ -24,6 +24,8 @@ sealed class JanelaPrincipal : Window
     readonly PaginaCifrar cifrar;
     readonly PaginaDecifrar decifrar;
     readonly PaginaContatos contatos;
+    readonly PaginaAssinar assinar;
+    readonly PaginaVerificar verificar;
     readonly Control inicio;
     bool expandida = true;
 
@@ -40,6 +42,8 @@ sealed class JanelaPrincipal : Window
         cifrar = new PaginaCifrar(amb, () => Mostrar(contatos!));
         decifrar = new PaginaDecifrar(amb);
         contatos = new PaginaContatos(amb);
+        assinar = new PaginaAssinar(amb);
+        verificar = new PaginaVerificar(amb);
         inicio = TelaInicial();
 
         var navTopo = new StackPanel { Spacing = 2 };
@@ -47,6 +51,8 @@ sealed class JanelaPrincipal : Window
         navTopo.Children.Add(new Border { Height = 8 });
         navTopo.Children.Add(ItemNav(Icones.Cadeado, "Cifrar Arquivos", () => Mostrar(cifrar), cifrar));
         navTopo.Children.Add(ItemNav(Icones.CadeadoAberto, "Decifrar Arquivos", () => Mostrar(decifrar), decifrar));
+        navTopo.Children.Add(ItemNav(Icones.Caneta, "Assinar Arquivos", () => Mostrar(assinar), assinar));
+        navTopo.Children.Add(ItemNav(Icones.Selo, "Verificar Assinaturas", () => Mostrar(verificar), verificar));
         navTopo.Children.Add(ItemNav(Icones.Pessoas, "Contatos e Certificados", () => Mostrar(contatos), contatos));
 
         var navBase = new StackPanel { Spacing = 2 };
@@ -91,6 +97,7 @@ sealed class JanelaPrincipal : Window
         {
             var ext = Path.GetExtension(arquivoInicial).ToLowerInvariant();
             if (ext is ".p7m" or ".enc") { Mostrar(decifrar); decifrar.Adicionar(new[] { arquivoInicial }); }
+            else if (ext is ".p7s") { Mostrar(verificar); verificar.Adicionar(new[] { arquivoInicial }); }
             else { Mostrar(cifrar); cifrar.Adicionar(new[] { arquivoInicial }); }
         }
     }
@@ -125,6 +132,8 @@ sealed class JanelaPrincipal : Window
             PaginaCifrar => "Cifrar Arquivos",
             PaginaDecifrar => "Decifrar Arquivos",
             PaginaContatos => "Contatos e Certificados",
+            PaginaAssinar => "Assinar Arquivos",
+            PaginaVerificar => "Verificar Assinaturas",
             _ => "Escolha uma opção para utilizar",
         };
         foreach (var (t, b) in botaoDaTela)
@@ -176,13 +185,16 @@ sealed class JanelaPrincipal : Window
                     {
                         Bloco(Icones.Cadeado, "Cifrar Arquivos", "Para destinatários (certificado) ou com senha", () => cifrar),
                         Bloco(Icones.CadeadoAberto, "Decifrar Arquivos", "Com o seu token, .pfx ou a senha", () => decifrar),
+                        Bloco(Icones.Caneta, "Assinar Arquivos", "Assinatura ICP-Brasil (.p7s) com carimbo do tempo", () => assinar),
+                        Bloco(Icones.Selo, "Verificar Assinaturas", "Confere signatário, política e carimbo do tempo", () => verificar),
                         Bloco(Icones.Pessoas, "Contatos e Certificados", "Certificados de quem pode receber arquivos cifrados", () => contatos),
                     },
                 },
                 new TextBlock
                 {
                     Margin = new Thickness(8, 12, 8, 0), Opacity = 0.75, TextWrapping = TextWrapping.Wrap,
-                    Text = "Algoritmos abertos: AES-256 e RSA no formato CMS (RFC 5652), compatível com o openssl. " +
+                    Text = "Algoritmos abertos: AES-256, RSA e SHA-256 no formato CMS (RFC 5652), compatível com o openssl. " +
+                           "Assinatura no padrão CAdES da ICP-Brasil (DOC-ICP-15.03) e carimbo do tempo RFC 3161. " +
                            "Funciona com tokens de qualquer fabricante pelo driver PKCS#11 (Dexon, SafeSign, SafeNet, Watchdata e outros). " +
                            "Não use para informação classificada.",
                 },
@@ -206,9 +218,10 @@ sealed class JanelaPrincipal : Window
 
     Task Sobre() => Ui.Mensagem(this,
         $"CifraToken {Versao}\n\n" +
-        "Cifra e decifra arquivos com certificado digital ICP-Brasil em token, .pfx ou senha.\n\n" +
+        "Cifra, decifra e assina arquivos com certificado digital ICP-Brasil em token, .pfx ou senha.\n\n" +
         "Para destinatários: CMS EnvelopedData (RFC 5652), AES-256-CBC com chave de sessão em RSA (PKCS#1 v1.5 ou OAEP).\n" +
-        "Com senha: formato do openssl enc / .enc do Quimera (AES-256-CBC, PBKDF2-HMAC-SHA512, 1.000.000 de iterações).\n\n" +
+        "Com senha: formato do openssl enc / .enc do Quimera (AES-256-CBC, PBKDF2-HMAC-SHA512, 1.000.000 de iterações).\n" +
+        "Assinatura: CAdES destacada (.p7s) com SHA-256, políticas AD-RB e AD-RT da ICP-Brasil (DOC-ICP-15.03) e carimbo do tempo RFC 3161.\n\n" +
         "Bibliotecas: .NET, Avalonia (MIT), Pkcs11Interop (Apache 2.0).\n" +
         "Ferramenta consultiva. Não use para informação classificada (Decreto 7.845/2012).",
         "Sobre o CifraToken");
