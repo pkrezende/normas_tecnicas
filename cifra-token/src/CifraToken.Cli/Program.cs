@@ -3,21 +3,23 @@ using System.Security.Cryptography.X509Certificates;
 using CifraToken.Core;
 
 const string Uso = """
+CifraToken, linha de comando. Para a janela com as telas, abra CifraToken.exe (Linux: ./CifraToken), na mesma pasta.
+
 Uso:
-  cifratoken cifrar -i ARQUIVO -o SAIDA.p7m (-r CERT.cer | -t IMPRESSAO_DIGITAL | --do-token)... [--oaep]
-  cifratoken decifrar -i ARQUIVO.p7m -o SAIDA [--pfx MEU.pfx | --pkcs11 [BIBLIOTECA]]
-  cifratoken cifrar-senha -i ARQUIVO -o SAIDA.enc
-  cifratoken decifrar-senha -i ARQUIVO.enc -o SAIDA
-  cifratoken assinar -i ARQUIVO [-o ARQUIVO.p7s] (--pfx MEU.pfx | --pkcs11 [BIBLIOTECA] | -t IMPRESSAO_DIGITAL)
+  cifratoken-cli cifrar -i ARQUIVO -o SAIDA.p7m (-r CERT.cer | -t IMPRESSAO_DIGITAL | --do-token)... [--oaep]
+  cifratoken-cli decifrar -i ARQUIVO.p7m -o SAIDA [--pfx MEU.pfx | --pkcs11 [BIBLIOTECA]]
+  cifratoken-cli cifrar-senha -i ARQUIVO -o SAIDA.enc
+  cifratoken-cli decifrar-senha -i ARQUIVO.enc -o SAIDA
+  cifratoken-cli assinar -i ARQUIVO [-o ARQUIVO.p7s] (--pfx MEU.pfx | --pkcs11 [BIBLIOTECA] | -t IMPRESSAO_DIGITAL)
                     [--politica AD-RB|AD-RT|politica.der] [--act URL] [--act-politica OID]
-  cifratoken assinar-pdf -i DOC.pdf [-o DOC-assinado.pdf] (--pfx|--pkcs11|-t ...) [--politica AD-RB|AD-RT] [--act URL]
+  cifratoken-cli assinar-pdf -i DOC.pdf [-o DOC-assinado.pdf] (--pfx|--pkcs11|-t ...) [--politica AD-RB|AD-RT] [--act URL]
                     [--estampa carimbo|assinatura|nenhuma] [--logo LOGO.png] [--pagina N|ultima]
                     [--posicao inferior-direito|inferior-esquerdo|superior-direito|superior-esquerdo|centro]
                     [--motivo TEXTO] [--local TEXTO]
-  cifratoken verificar -i ARQUIVO [-s ARQUIVO.p7s]   (um PDF sem .p7s ao lado: confere as assinaturas internas)
-  cifratoken politica AD-RB|AD-RT|politica.der
-  cifratoken destinatarios -i ARQUIVO.p7m
-  cifratoken listar [--pkcs11 [BIBLIOTECA]]
+  cifratoken-cli verificar -i ARQUIVO [-s ARQUIVO.p7s]   (um PDF sem .p7s ao lado: confere as assinaturas internas)
+  cifratoken-cli politica AD-RB|AD-RT|politica.der
+  cifratoken-cli destinatarios -i ARQUIVO.p7m
+  cifratoken-cli listar [--pkcs11 [BIBLIOTECA]]
 
   -r  certificado do destinatário em arquivo (.cer, .crt ou .pem); repita para vários
   -t  certificado do destinatário no repositório do Windows, pela impressão digital (veja "listar")

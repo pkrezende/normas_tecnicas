@@ -28,7 +28,9 @@ Em **Releases** no repositório (coluna da direita), na versão mais recente, em
 | `CifraToken-win-x86.zip` | Windows, se o driver do token só existir em 32 bits (em `C:\Windows\SysWOW64`) |
 | `CifraToken-linux-x64.tar.gz` | Linux 64 bits |
 
-Cada pacote tem `CifraToken` (janela) e `cifratoken` (linha de comando). Não precisa instalar o .NET.
+Descompacte e abra **`CifraToken.exe`** (no Linux, `./CifraToken`): é a janela com as telas abaixo.
+O pacote também traz **`cifratoken-cli`** (`cifratoken-cli.exe` no Windows), a linha de comando, para scripts.
+Não precisa instalar o .NET.
 No Windows, o SmartScreen pode avisar na primeira execução ("Mais informações" > "Executar assim mesmo").
 
 ## Telas
@@ -139,20 +141,20 @@ consultada. Para validação jurídica completa, use também o Verificador de Co
 ## Linha de comando
 
 ```
-cifratoken listar --pkcs11                      # certificados do token (procura o DXSafePKCS11.dll)
-cifratoken cifrar -i doc.pdf -o doc.pdf.p7m --do-token -r contingencia.cer
-cifratoken decifrar -i doc.pdf.p7m -o doc.pdf --pkcs11
-cifratoken destinatarios -i doc.pdf.p7m
-cifratoken decifrar -i doc.pdf.p7m -o doc.pdf --pfx meu.pfx
-cifratoken cifrar-senha -i doc.pdf -o doc.pdf.enc       # formato .enc do Quimera / openssl enc
-cifratoken decifrar-senha -i doc.pdf.enc -o doc.pdf
-cifratoken assinar -i doc.pdf --pkcs11 --politica AD-RB          # gera doc.pdf.p7s
-cifratoken assinar -i doc.pdf --pkcs11 --politica AD-RT --act https://sct.acdefesa.mil.br/timestamp
-cifratoken verificar -i doc.pdf                                   # procura doc.pdf.p7s
-cifratoken assinar-pdf -i doc.pdf --pkcs11 --politica AD-RT --act https://sct.acdefesa.mil.br/timestamp \
+cifratoken-cli listar --pkcs11                      # certificados do token (procura o DXSafePKCS11.dll)
+cifratoken-cli cifrar -i doc.pdf -o doc.pdf.p7m --do-token -r contingencia.cer
+cifratoken-cli decifrar -i doc.pdf.p7m -o doc.pdf --pkcs11
+cifratoken-cli destinatarios -i doc.pdf.p7m
+cifratoken-cli decifrar -i doc.pdf.p7m -o doc.pdf --pfx meu.pfx
+cifratoken-cli cifrar-senha -i doc.pdf -o doc.pdf.enc       # formato .enc do Quimera / openssl enc
+cifratoken-cli decifrar-senha -i doc.pdf.enc -o doc.pdf
+cifratoken-cli assinar -i doc.pdf --pkcs11 --politica AD-RB          # gera doc.pdf.p7s
+cifratoken-cli assinar -i doc.pdf --pkcs11 --politica AD-RT --act https://sct.acdefesa.mil.br/timestamp
+cifratoken-cli verificar -i doc.pdf                                   # procura doc.pdf.p7s
+cifratoken-cli assinar-pdf -i doc.pdf --pkcs11 --politica AD-RT --act https://sct.acdefesa.mil.br/timestamp \
            --estampa carimbo --logo logo.png --pagina ultima --posicao inferior-direito   # gera doc-assinado.pdf
-cifratoken verificar -i doc-assinado.pdf                          # confere as assinaturas dentro do PDF
-cifratoken politica AD-RB                                         # baixa e mostra a política do ITI
+cifratoken-cli verificar -i doc-assinado.pdf                          # confere as assinaturas dentro do PDF
+cifratoken-cli politica AD-RB                                         # baixa e mostra a política do ITI
 ```
 O PIN é pedido na tela (ou lido de `CIFRATOKEN_PIN`, apenas para testes automatizados).
 
