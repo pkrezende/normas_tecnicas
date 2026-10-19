@@ -13,7 +13,7 @@ Uso:
   cifratoken-cli assinar -i ARQUIVO [-o ARQUIVO.p7s] (--pfx MEU.pfx | --pkcs11 [BIBLIOTECA] | -t IMPRESSAO_DIGITAL)
                     [--politica AD-RB|AD-RT|politica.der] [--act URL] [--act-politica OID]
   cifratoken-cli assinar-pdf -i DOC.pdf [-o DOC-assinado.pdf] (--pfx|--pkcs11|-t ...) [--politica AD-RB|AD-RT] [--act URL]
-                    [--estampa carimbo|assinatura|nenhuma] [--logo LOGO.png] [--pagina N|ultima]
+                    [--estampa visivel|nenhuma] [--logo LOGO.png] [--pagina N|ultima]
                     [--posicao inferior-direito|inferior-esquerdo|superior-direito|superior-esquerdo|centro]
                     [--motivo TEXTO] [--local TEXTO]
   cifratoken-cli verificar -i ARQUIVO [-s ARQUIVO.p7s]   (um PDF sem .p7s ao lado: confere as assinaturas internas)
@@ -32,8 +32,9 @@ Uso:
   assinar: assinatura destacada CAdES (.p7s). --politica inclui a Política de Assinatura ICP-Brasil
          (DOC-ICP-15.03), baixada do ITI; AD-RT exige --act (carimbo do tempo RFC 3161).
          ACT Defesa: https://sct.acdefesa.mil.br/timestamp (só nas redes cadastradas do MD e das Forças).
-  assinar-pdf: assinatura PAdES dentro do PDF (políticas PAdES v1.3 da ICP-Brasil) com estampa visível:
-         "carimbo" (carimbo de tinta, à moda antiga) ou "assinatura" (quadro), com o logo opcional (PNG/JPEG).
+  assinar-pdf: assinatura PAdES dentro do PDF (políticas PAdES v1.3 da ICP-Brasil) com estampa visível e
+         logo opcional (PNG/JPEG). Com --act, a estampa é redonda, "CARIMBADO E ASSINADO"; sem, é o quadro
+         de assinatura. --estampa nenhuma assina sem estampa.
   Sem --pfx, a chave é procurada no repositório "Pessoal" (onde o middleware do token
   registra o certificado) e o middleware pede o PIN.
 """;
@@ -93,13 +94,24 @@ try
             {
                 using var token = AbrirToken("--pkcs11");
                 var destinos = CmsCifra.Destinatarios(p7m);
-                var alvo = token.Certificados().FirstOrDefault(c => destinos.Any(d => d.Corresponde(c.Certificado)))
-                    ?? throw new CryptographicException("Nenhum certificado do token é destinatário deste arquivo.");
-                Console.Error.WriteLine($"Certificado: {CmsCifra.Nome(alvo.Certificado)} (token {alvo.Token})");
-                if (token.AvisoPin(alvo) is { } aviso) Console.Error.WriteLine(aviso);
+                var certs = token.Certificados();
+                // sem destinatário que confira pelo emissor e nº de série, tenta as chaves de cifrar do token
+                var candidatos = certs.Where(c => destinos.Any(d => d.Corresponde(c.Certificado))).ToList();
+                if (candidatos.Count == 0) candidatos = certs.Where(c => CmsCifra.PermiteCifrar(c.Certificado)).ToList();
+                if (candidatos.Count == 0) throw new CryptographicException("Nenhum certificado do token pode decifrar este arquivo.");
+                Console.Error.WriteLine($"Certificado: {CmsCifra.Nome(candidatos[0].Certificado)} (token {candidatos[0].Token})");
+                if (token.AvisoPin(candidatos[0]) is { } aviso) Console.Error.WriteLine(aviso);
                 var pin = Environment.GetEnvironmentVariable("CIFRATOKEN_PIN") ?? LerSenha("PIN do token: ");
-                using var chave = token.ChavePrivada(alvo, pin);
-                claro = CmsCifra.Decifrar(p7m, alvo.Certificado, chave);
+                var pares = new List<(X509Certificate2, RSA)>();
+                try
+                {
+                    foreach (var c in candidatos) pares.Add((c.Certificado, token.ChavePrivada(c, pin)));
+                    claro = CmsCifra.DecifrarComChaves(p7m, pares);
+                }
+                finally
+                {
+                    foreach (var (_, k) in pares) k.Dispose();
+                }
             }
             else
                 claro = CmsCifra.Decifrar(p7m, chaves);
@@ -170,10 +182,11 @@ try
                 byte[] resultado;
                 if (pdf)
                 {
-                    var estilo = (Opcao("--estampa") ?? "carimbo") switch
+                    var estilo = (Opcao("--estampa") ?? "visivel") switch
                     {
-                        "carimbo" => EstiloEstampa.Carimbo, "assinatura" => EstiloEstampa.Assinatura, "nenhuma" => EstiloEstampa.Nenhuma,
-                        var e => throw new ArgumentException($"Estampa desconhecida: {e}. Use carimbo, assinatura ou nenhuma."),
+                        "visivel" or "visível" or "carimbo" or "assinatura" => EstiloEstampa.Visivel,
+                        "nenhuma" => EstiloEstampa.Nenhuma,
+                        var e => throw new ArgumentException($"Estampa desconhecida: {e}. Use visivel ou nenhuma."),
                     };
                     var posicao = (Opcao("--posicao") ?? "inferior-direito") switch
                     {

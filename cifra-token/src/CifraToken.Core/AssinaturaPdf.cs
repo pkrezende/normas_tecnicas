@@ -11,12 +11,16 @@ using PdfSharp.Pdf.IO;
 
 namespace CifraToken.Core;
 
-public enum EstiloEstampa { Nenhuma, Carimbo, Assinatura }
+/// <summary>
+/// Visível: com carimbo do tempo, carimbo redondo "CARIMBADO E ASSINADO"; sem carimbo, quadro de assinatura.
+/// Nunca os dois juntos.
+/// </summary>
+public enum EstiloEstampa { Nenhuma, Visivel }
 
 public enum PosicaoEstampa { InferiorDireito, InferiorEsquerdo, SuperiorDireito, SuperiorEsquerdo, Centro }
 
 /// <summary>
-/// Aparência da assinatura na página: carimbo de tinta à moda antiga ou quadro de assinatura, com logo opcional (PNG ou JPEG).
+/// Aparência da assinatura na página, com logo opcional (PNG ou JPEG). O desenho depende de haver carimbo do tempo.
 /// <paramref name="Pagina"/> começa em 1; 0 é a última página.
 /// </summary>
 public sealed record Estampa(EstiloEstampa Estilo, int Pagina = 0, PosicaoEstampa Posicao = PosicaoEstampa.InferiorDireito,
@@ -92,11 +96,12 @@ public static class AssinaturaPdf
         var retangulo = new XRect();
         if (estampa.Estilo != EstiloEstampa.Nenhuma)
         {
-            var (l, a) = estampa.Estilo == EstiloEstampa.Carimbo ? (230.0, 112.0) : (270.0, 78.0);
+            var redondo = !string.IsNullOrWhiteSpace(urlAct);
+            var (l, a) = redondo ? (140.0, 140.0) : (270.0, 78.0);
             retangulo = Posicionar(pagina.Width.Point, pagina.Height.Point, l, a, estampa.Posicao);
             using var g = XGraphics.FromPdfPage(pagina, XGraphicsPdfPageOptions.Append);
             var dados = new DadosEstampa(CmsCifra.Nome(cert), agora, politica, urlAct, estampa.Logo);
-            if (estampa.Estilo == EstiloEstampa.Carimbo) DesenharCarimbo(g, retangulo, dados);
+            if (redondo) DesenharCarimbo(g, retangulo, dados);
             else DesenharQuadro(g, retangulo, dados);
         }
 
@@ -187,35 +192,61 @@ public static class AssinaturaPdf
         public string? Servidor => Act is not null && Uri.TryCreate(Act, UriKind.Absolute, out var u) ? u.Host : Act;
     }
 
-    /// <summary>Carimbo de borracha: moldura dupla arredondada, tinta azul-escura, levemente inclinado.</summary>
+    /// <summary>
+    /// Carimbo redondo de borracha, levemente inclinado: "CARIMBADO E ASSINADO" no arco de cima, ICP-Brasil e o padrão
+    /// no arco de baixo, e no miolo o logo, a data, a hora e o signatário.
+    /// </summary>
     static void DesenharCarimbo(XGraphics g, XRect r, DadosEstampa d)
     {
         var tinta = XColor.FromArgb(225, 22, 45, 140);
-        var caneta = new XPen(tinta, 2.6);
-        var fina = new XPen(tinta, 0.9);
         var pincel = new XSolidBrush(tinta);
+        var centro = new XPoint(r.X + r.Width / 2, r.Y + r.Height / 2);
+        var raio = Math.Min(r.Width, r.Height) / 2 - 2;
         var estado = g.Save();
-        g.RotateAtTransform(-4, new XPoint(r.X + r.Width / 2, r.Y + r.Height / 2));
-        g.DrawRoundedRectangle(caneta, r, new XSize(14, 14));
-        var dentro = new XRect(r.X + 5, r.Y + 5, r.Width - 10, r.Height - 10);
-        g.DrawRoundedRectangle(fina, dentro, new XSize(10, 10));
+        g.RotateAtTransform(-8, centro);
+        Circulo(g, new XPen(tinta, 2.6), centro, raio);
+        Circulo(g, new XPen(tinta, 0.9), centro, raio - 5);
+        Circulo(g, new XPen(tinta, 0.9), centro, raio - 22);
 
-        var area = new XRect(dentro.X + 6, dentro.Y + 4, dentro.Width - 12, dentro.Height - 8);
-        if (DesenharLogo(g, d.Logo, new XRect(area.X, area.Y + (area.Height - 46) / 2, 46, 46)))
-            area = new XRect(area.X + 50, area.Y, area.Width - 50, area.Height);
+        var arco = raio - 13.5; // meio da faixa entre os anéis
+        TextoNoArco(g, "CARIMBADO E ASSINADO", new XFont("Liberation Sans", 9, XFontStyleEx.Bold), pincel, centro, arco, emCima: true);
+        TextoNoArco(g, d.Padrao.ToUpperInvariant().Replace("PADES", "PAdES"), new XFont("Liberation Sans", 6), pincel, centro, arco, emCima: false);
+        foreach (var lado in new[] { -1, 1 }) // estrelinhas que separam os dois arcos
+            g.DrawString("★", new XFont("Liberation Sans", 7), pincel, new XRect(centro.X + lado * arco - 5, centro.Y - 5, 10, 10), XStringFormats.Center);
 
-        var titulo = d.Act is null ? "ASSINADO" : "CARIMBADO";
-        var y = area.Y + (area.Height - (d.Servidor is null ? 60 : 69)) / 2; // centraliza as linhas na moldura
-        Linha(g, titulo, new XFont("Liberation Serif", 21, XFontStyleEx.Bold), pincel, area, ref y, 23);
-        g.DrawLine(fina, area.X + 8, y, area.Right - 8, y);
-        y += 3;
-        Linha(g, $"{d.Utc:dd} {Meses[d.Utc.Month - 1]} {d.Utc:yyyy}  {d.Utc:HH:mm} UTC",
-            new XFont("Liberation Sans", 10.5, XFontStyleEx.Bold), pincel, area, ref y, 13);
-        Linha(g, Cortar(d.Signatario.ToUpperInvariant(), 34), new XFont("Liberation Sans", 8.5, XFontStyleEx.Bold), pincel, area, ref y, 11);
-        Linha(g, d.Padrao.ToUpperInvariant().Replace("PADES", "PAdES"), new XFont("Liberation Sans", 7.5), pincel, area, ref y, 10);
-        if (d.Servidor is not null)
-            Linha(g, "CARIMBO DO TEMPO: " + Cortar(d.Servidor.ToUpperInvariant(), 30), new XFont("Liberation Sans", 7), pincel, area, ref y, 9);
+        var miolo = raio - 24;
+        var y = centro.Y - miolo + 4;
+        if (DesenharLogo(g, d.Logo, new XRect(centro.X - 11, y, 22, 22))) y += 23;
+        else y += 8;
+        var largura = new XRect(centro.X - miolo, 0, miolo * 2, 0);
+        Linha(g, $"{d.Utc:dd} {Meses[d.Utc.Month - 1]} {d.Utc:yyyy}", new XFont("Liberation Sans", 8.5, XFontStyleEx.Bold), pincel, largura, ref y, 10);
+        Linha(g, $"{d.Utc:HH:mm} UTC", new XFont("Liberation Sans", 7.5, XFontStyleEx.Bold), pincel, largura, ref y, 9);
+        Linha(g, Cortar(d.Signatario.Split(':')[0].ToUpperInvariant(), 22), new XFont("Liberation Sans", 5.5, XFontStyleEx.Bold), pincel, largura, ref y, 7);
         g.Restore(estado);
+    }
+
+    static void Circulo(XGraphics g, XPen caneta, XPoint c, double raio) =>
+        g.DrawEllipse(caneta, c.X - raio, c.Y - raio, raio * 2, raio * 2);
+
+    /// <summary>Escreve letra por letra ao longo do arco: em cima lendo da esquerda para a direita, embaixo também, de pé.</summary>
+    static void TextoNoArco(XGraphics g, string texto, XFont fonte, XBrush pincel, XPoint c, double raio, bool emCima)
+    {
+        var larguras = texto.Select(ch => g.MeasureString(ch.ToString(), fonte).Width).ToArray();
+        var total = larguras.Sum() / raio; // ângulo ocupado, em radianos
+        var limite = Math.PI * 0.8;
+        var escala = total > limite ? limite / total : 1; // texto longo demais é comprimido para caber no arco
+        var angulo = emCima ? -Math.PI / 2 - total * escala / 2 : Math.PI / 2 + total * escala / 2;
+        for (var i = 0; i < texto.Length; i++)
+        {
+            var passo = larguras[i] / raio * escala;
+            var meio = emCima ? angulo + passo / 2 : angulo - passo / 2;
+            var ponto = new XPoint(c.X + raio * Math.Cos(meio), c.Y + raio * Math.Sin(meio));
+            var estado = g.Save();
+            g.RotateAtTransform(meio * 180 / Math.PI + (emCima ? 90 : -90), ponto);
+            g.DrawString(texto[i].ToString(), fonte, pincel, new XRect(ponto.X - 10, ponto.Y - 6, 20, 12), XStringFormats.Center);
+            g.Restore(estado);
+            angulo = emCima ? angulo + passo : angulo - passo;
+        }
     }
 
     /// <summary>Quadro de assinatura: logo à esquerda, signatário e dados à direita.</summary>
@@ -257,6 +288,7 @@ public static class AssinaturaPdf
         }
         using (img)
         {
+            img.Interpolate = false; // /Interpolate true faz alguns leitores de PDF recusarem a página
             var escala = Math.Min(caixa.Width / img.PixelWidth, caixa.Height / img.PixelHeight);
             var (l, a) = (img.PixelWidth * escala, img.PixelHeight * escala);
             g.DrawImage(img, caixa.X + (caixa.Width - l) / 2, caixa.Y + (caixa.Height - a) / 2, l, a);

@@ -108,7 +108,7 @@ out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d
 out += b"trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, x)
 open("doc.pdf", "wb").write(out)
 PY
-  CIFRATOKEN_SENHA=teste123 $CLI assinar-pdf -i doc.pdf -o doc-assinado.pdf --pfx titular.pfx --act "http://127.0.0.1:$PORTA/" --estampa carimbo >/dev/null
+  CIFRATOKEN_SENHA=teste123 $CLI assinar-pdf -i doc.pdf -o doc-assinado.pdf --pfx titular.pfx --act "http://127.0.0.1:$PORTA/" --estampa visivel >/dev/null
   pdfsig doc-assinado.pdf > pdfsig.txt 2>&1 || true
   grep -q "Signature is Valid" pdfsig.txt && grep -q "ETSI.CAdES.detached" pdfsig.txt && grep -q "Total document signed" pdfsig.txt
   $CLI verificar -i doc-assinado.pdf | grep -q "Carimbo do tempo:.*íntegro"
@@ -130,7 +130,14 @@ if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
   openssl x509 -in titular.pem -outform DER -out titular.der
   pkcs11-tool --module "$SOFTHSM" --login --pin 123456 --write-object titular.p8 --type privkey --id 01 --label titular >/dev/null
   pkcs11-tool --module "$SOFTHSM" --login --pin 123456 --write-object titular.der --type cert --id 01 --label titular >/dev/null
-  $CLI listar --pkcs11 "$SOFTHSM" | grep -q "titular laboratorio"
+  # como nos tokens reais, o certificado da AC fica junto (aqui com o mesmo CKA_ID, o pior caso)
+  openssl req -x509 -newkey rsa:2048 -nodes -keyout ac.key -out ac.pem -days 30 -subj "/CN=AC de laboratorio" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
+  openssl x509 -in ac.pem -outform DER -out ac.der
+  pkcs11-tool --module "$SOFTHSM" --login --pin 123456 --write-object ac.der --type cert --id 01 --label ac >/dev/null
+  $CLI listar --pkcs11 "$SOFTHSM" > lista.txt
+  grep -q "titular laboratorio" lista.txt
+  if grep -q "AC de laboratorio" lista.txt; then echo "FALHOU: listou o certificado da AC"; exit 1; fi
   CIFRATOKEN_PIN=123456 $CLI decifrar -i a.p7m -o f.bin --pkcs11 "$SOFTHSM" >/dev/null; igual f.bin
   CIFRATOKEN_PIN=123456 $CLI decifrar -i e.p7m -o g.bin --pkcs11 "$SOFTHSM" >/dev/null 2>&1; igual g.bin
   $CLI cifrar -i original.bin -o h.p7m --do-token "$SOFTHSM" >/dev/null
@@ -141,7 +148,7 @@ if [ -n "$SOFTHSM" ] && command -v pkcs11-tool >/dev/null; then
   grep -q "Digite o PIN" err.txt
   CIFRATOKEN_PIN=123456 $CLI assinar -i original.bin -o tok.p7s --pkcs11 "$SOFTHSM" --politica "$DIR/CifraToken.Testes/dados/PA_AD_RB_v2_3.der" >/dev/null 2>&1
   openssl cms -verify -binary -inform DER -in tok.p7s -content original.bin -noverify -out /dev/null 2>/dev/null
-  ok "token PKCS#11 (SoftHSM): listar, decifrar PKCS#1 e OAEP, cifrar --do-token, assinar, PIN errado"
+  ok "token PKCS#11 (SoftHSM) com AC junto: listar, decifrar PKCS#1 e OAEP, cifrar --do-token, assinar, PIN errado"
 else
   echo "--  token PKCS#11 não testado (falta softhsm2 ou opensc)"
 fi

@@ -152,7 +152,10 @@ public sealed class TokenPkcs11 : IDisposable
                 try
                 {
                     var cert = X509CertificateLoader.LoadCertificate(attrs[0].GetValueAsByteArray());
-                    if (cert.GetRSAPublicKey() is not null)
+                    // o token também guarda os certificados das ACs da cadeia (assinam certificados); esses não têm chave privada
+                    var ehAc = cert.Extensions.OfType<X509BasicConstraintsExtension>().Any(b => b.CertificateAuthority)
+                               && cert.Extensions.OfType<X509KeyUsageExtension>().Any(k => k.KeyUsages.HasFlag(X509KeyUsageFlags.KeyCertSign));
+                    if (!ehAc && cert.GetRSAPublicKey() is not null)
                         lista.Add(new CertificadoNoToken(cert, attrs[1].GetValueAsByteArray() ?? Array.Empty<byte>(), rotulo));
                 }
                 catch (CryptographicException) { /* objeto que não é um certificado X.509 válido */ }

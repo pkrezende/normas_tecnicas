@@ -214,11 +214,13 @@ sealed class PaginaCifrar : PaginaArquivos, IAoMostrar
             extensao = ".p7m";
         }
 
+        var pasta = await EscolherPastaSaida("Pasta onde gravar os arquivos cifrados");
+        if (pasta is null) return;
         int feitos = 0, pulados = 0;
         var erros = new List<string>();
         foreach (var arquivo in Arquivos.ToList())
         {
-            var destino = arquivo + extensao;
+            var destino = Path.Combine(pasta, Path.GetFileName(arquivo) + extensao);
             var pode = await PodeGravar(destino);
             if (pode is null) break;
             if (pode == false) { pulados++; continue; }
@@ -235,7 +237,7 @@ sealed class PaginaCifrar : PaginaArquivos, IAoMostrar
             }
         }
         var resumo = $"Foram cifrados {feitos} arquivo(s)" + (pulados > 0 ? $", {pulados} pulado(s)" : "") +
-                     $". Cada um foi salvo ao lado do original com a extensão {extensao}.";
+                     $" e salvos em {pasta}, com a extensão {extensao}.";
         Informar(erros.Count == 0 ? resumo : resumo + "\nFalhas:\n" + string.Join("\n", erros), erro: erros.Count > 0);
         if (modoSenha) senha.Text = confirma.Text = "";
     }

@@ -17,11 +17,12 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
     readonly PainelCredencial credencial;
     readonly ComboBox certificados = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly ComboBox politica = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
-    readonly CheckBox carimbo = new() { Content = "Incluir carimbo do tempo (RFC 3161)" };
+    readonly CheckBox carimbo = new() { Content = "Incluir carimbo do tempo (RFC 3161), de uma ACT" };
     readonly TextBox urlAct = new();
     readonly TextBlock notaPolitica = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = 0.8 };
     readonly CheckBox dentroDoPdf = new() { Content = "Assinar dentro do PDF (PAdES), gerando \"nome-assinado.pdf\"" };
-    readonly ComboBox estilo = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
+    readonly CheckBox mostrarEstampa = new() { Content = "Mostrar a estampa da assinatura na página" };
+    readonly TextBlock notaEstampa = new() { TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = 0.8 };
     readonly ComboBox pagina = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly ComboBox posicao = new() { HorizontalAlignment = HorizontalAlignment.Stretch };
     readonly TextBox logo = new() { Watermark = "sem logo" };
@@ -37,12 +38,6 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
         ("Sem política (CMS simples, com a hora do computador)", ""),
     };
 
-    static readonly (string Rotulo, EstiloEstampa Valor)[] Estilos =
-    {
-        ("Carimbo (à moda antiga, inclinado, com a data)", EstiloEstampa.Carimbo),
-        ("Quadro de assinatura (logo, nome e data)", EstiloEstampa.Assinatura),
-        ("Sem estampa visível", EstiloEstampa.Nenhuma),
-    };
     static readonly (string Rotulo, PosicaoEstampa Valor)[] Posicoes =
     {
         ("Canto inferior direito", PosicaoEstampa.InferiorDireito), ("Canto inferior esquerdo", PosicaoEstampa.InferiorEsquerdo),
@@ -58,14 +53,14 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
 
     public PaginaAssinar(Ambiente amb) : base(amb)
     {
-        credencial = new PainelCredencial(amb, (t, e) => Informar(t, e), "assinar");
+        credencial = new PainelCredencial(amb, "assinar");
         politica.ItemsSource = Politicas.Select(p => p.Rotulo).ToList();
         politica.SelectionChanged += (_, _) => PoliticaMudou();
-        carimbo.IsCheckedChanged += (_, _) => urlAct.IsEnabled = carimbo.IsChecked == true;
-        estilo.ItemsSource = Estilos.Select(e => e.Rotulo).ToList();
+        carimbo.IsCheckedChanged += (_, _) => { urlAct.IsEnabled = carimbo.IsChecked == true; EstampaMudou(); };
+        mostrarEstampa.IsCheckedChanged += (_, _) => EstampaMudou();
         posicao.ItemsSource = Posicoes.Select(e => e.Rotulo).ToList();
         pagina.ItemsSource = new[] { "Última página", "Primeira página" };
-        dentroDoPdf.IsCheckedChanged += (_, _) => estilo.IsEnabled = pagina.IsEnabled = posicao.IsEnabled = logo.IsEnabled = motivo.IsEnabled = dentroDoPdf.IsChecked == true;
+        dentroDoPdf.IsCheckedChanged += (_, _) => EstampaMudou();
         var linhaLogo = new Grid { ColumnDefinitions = new ColumnDefinitions("*,Auto,Auto") };
         linhaLogo.Children.Add(logo);
         var procurar = Ui.BotaoSimples("Procurar...", () => _ = EscolherLogo());
@@ -84,7 +79,7 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
             Spacing = 4,
             Children =
             {
-                dentroDoPdf, Ui.Rotulo("Estampa na página:"), estilo, Ui.Rotulo("Página e posição:"), linhaLugar,
+                dentroDoPdf, mostrarEstampa, notaEstampa, Ui.Rotulo("Página e posição:"), linhaLugar,
                 Ui.Rotulo("Logo (PNG ou JPEG):"), linhaLogo, Ui.Rotulo("Motivo:"), motivo,
                 new TextBlock
                 {
@@ -105,21 +100,21 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
                 {
                     Spacing = 4, Children = { credencial, Ui.Rotulo("Certificado que vai assinar:"), certificados },
                 }),
-                grupoPdf,
-                Ui.Grupo("Política de assinatura e carimbo do tempo", new StackPanel
+                Ui.Grupo("Carimbo do tempo e política de assinatura", new StackPanel
                 {
                     Spacing = 4,
                     Children =
                     {
-                        Ui.Rotulo("Política de Assinatura (DOC-ICP-15.03):"), politica, notaPolitica,
                         carimbo, Ui.Rotulo("Endereço da ACT:"), urlAct,
                         new TextBlock
                         {
                             TextWrapping = TextWrapping.Wrap, FontSize = 11, Opacity = 0.8,
                             Text = "A ACT Defesa (" + CarimboTempo.UrlActDefesa + ") só atende computadores das redes cadastradas do MD e das Forças (DPCT ACT Defesa v1.0, item 4.2.3).",
                         },
+                        Ui.Rotulo("Política de Assinatura (DOC-ICP-15.03):"), politica, notaPolitica,
                     },
                 }),
+                grupoPdf,
             },
         };
         amb.Mudou += () =>
@@ -134,6 +129,7 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
 
     public void AoMostrar()
     {
+        if (!Amb.Credencial.Conectada) Amb.Credencial.Reler(); // o token pode ter sido trocado
         credencial.Atualizar();
         AtualizarCertificados();
     }
@@ -147,10 +143,11 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
         urlAct.Text = Amb.Cfg.UrlAct;
         urlAct.IsEnabled = carimbo.IsChecked == true;
         dentroDoPdf.IsChecked = Amb.Cfg.AssinarDentroDoPdf;
-        estilo.SelectedIndex = Math.Max(0, Array.FindIndex(Estilos, e => e.Valor == Amb.Cfg.Estampa));
+        mostrarEstampa.IsChecked = Amb.Cfg.MostrarEstampa;
         posicao.SelectedIndex = Math.Max(0, Array.FindIndex(Posicoes, e => e.Valor == Amb.Cfg.PosicaoEstampa));
         pagina.SelectedIndex = Amb.Cfg.PaginaEstampa == 1 ? 1 : 0;
         logo.Text = Amb.Cfg.ArquivoLogo;
+        EstampaMudou();
     }
 
     async Task EscolherLogo()
@@ -165,11 +162,25 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
     void LembrarEscolhas()
     {
         Amb.Cfg.AssinarDentroDoPdf = dentroDoPdf.IsChecked == true;
-        Amb.Cfg.Estampa = Estilos[Math.Max(0, estilo.SelectedIndex)].Valor;
+        Amb.Cfg.MostrarEstampa = mostrarEstampa.IsChecked == true;
         Amb.Cfg.PosicaoEstampa = Posicoes[Math.Max(0, posicao.SelectedIndex)].Valor;
         Amb.Cfg.PaginaEstampa = pagina.SelectedIndex == 1 ? 1 : 0;
         Amb.Cfg.ArquivoLogo = logo.Text?.Trim() ?? "";
         try { Amb.Cfg.Gravar(); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+    }
+
+    /// <summary>Com carimbo do tempo, a estampa é a redonda "CARIMBADO E ASSINADO"; sem, o quadro de assinatura.</summary>
+    void EstampaMudou()
+    {
+        var dentro = dentroDoPdf.IsChecked == true;
+        mostrarEstampa.IsEnabled = dentro;
+        pagina.IsEnabled = posicao.IsEnabled = logo.IsEnabled = dentro && mostrarEstampa.IsChecked == true;
+        motivo.IsEnabled = dentro;
+        notaEstampa.Text = !dentro || mostrarEstampa.IsChecked != true
+            ? "A assinatura fica no PDF sem marca visível; os leitores de PDF a mostram no painel de assinaturas."
+            : carimbo.IsChecked == true
+                ? "Com carimbo do tempo: estampa redonda \"CARIMBADO E ASSINADO\", com a data, o signatário e o logo."
+                : "Sem carimbo do tempo: quadro de assinatura com o logo, o signatário e a data.";
     }
 
     void PoliticaMudou()
@@ -187,20 +198,28 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
 
     void AtualizarCertificados()
     {
+        var antes = Escolhido?.Thumbprint;
         try { assinantes = Amb.Credencial.CertificadosAssinatura(); }
         catch (CryptographicException) { assinantes = new(); }
         certificados.ItemsSource = assinantes.Select(c => $"{CmsCifra.Nome(c)}  (válido até {c.NotAfter:dd/MM/yyyy})").ToList();
-        certificados.SelectedIndex = assinantes.Count > 0 ? 0 : -1;
-        certificados.PlaceholderText = Amb.Credencial.Conectada ? "Nenhum certificado de assinatura" : "Conecte a credencial";
+        var i = assinantes.FindIndex(c => c.Thumbprint == antes);
+        certificados.SelectedIndex = i >= 0 ? i : assinantes.Count > 0 ? 0 : -1;
+        certificados.PlaceholderText = Amb.Cfg.Modo == ModoCredencial.Pfx && !Amb.Credencial.Conectada
+            ? "Certificado do arquivo .pfx (a senha é pedida ao clicar em Ok)"
+            : "Nenhum certificado de assinatura. O token está conectado?";
     }
+
+    X509Certificate2? Escolhido => certificados.SelectedIndex >= 0 && certificados.SelectedIndex < assinantes.Count
+        ? assinantes[certificados.SelectedIndex] : null;
 
     protected override void ArquivosMudaram()
     {
         var pdfs = Arquivos.Count(EhPdf);
         grupoPdf.IsVisible = pdfs > 0;
         aviso.Text = Arquivos.Count == 0
-            ? "Utilize o painel da esquerda para adicionar os arquivos que serão assinados. Cada assinatura fica num arquivo .p7s ao lado do original, " +
-              "que não é alterado. Os PDFs podem ser assinados por dentro, com estampa de carimbo e logo."
+            ? "Utilize o painel da esquerda para adicionar os arquivos que serão assinados. Cada assinatura fica num arquivo .p7s, " +
+              "e o original não é alterado. Os PDFs podem ser assinados por dentro, com estampa e logo. Ao clicar em Ok, " +
+              "o programa pergunta a pasta onde gravar e pede o PIN."
             : $"{Arquivos.Count} arquivo(s) a assinar" + (pdfs > 0 ? $", {pdfs} PDF" : "") +
               ". Os demais arquivos ganham a assinatura em \"nome.extensão.p7s\".";
     }
@@ -208,17 +227,26 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
     protected override async Task Executar()
     {
         if (Arquivos.Count == 0) { Informar("Adicione os arquivos a assinar.", erro: true); return; }
-        if (!Amb.Credencial.Conectada) { Informar("Conecte a sua credencial criptográfica (PIN e Conectar).", erro: true); return; }
-        if (certificados.SelectedIndex < 0 || certificados.SelectedIndex >= assinantes.Count)
+        var pfx = Amb.Cfg.Modo == ModoCredencial.Pfx;
+        if (Escolhido is null && !(pfx && !Amb.Credencial.Conectada))
         {
-            Informar("Nenhum certificado de assinatura disponível na credencial.", erro: true);
+            Informar("Nenhum certificado de assinatura encontrado. Confira se o token está conectado e o driver em Preferências.", erro: true);
+            Amb.Credencial.Reler();
+            AtualizarCertificados();
             return;
         }
-        var cert = assinantes[certificados.SelectedIndex];
-        if (cert.NotAfter < DateTime.Now) { Informar($"O certificado venceu em {cert.NotAfter:dd/MM/yyyy}.", erro: true); return; }
+        if (Escolhido is { } c0 && c0.NotAfter < DateTime.Now) { Informar($"O certificado venceu em {c0.NotAfter:dd/MM/yyyy}.", erro: true); return; }
         var valorPolitica = Politicas[Math.Max(0, politica.SelectedIndex)].Valor;
         var act = carimbo.IsChecked == true ? urlAct.Text?.Trim() : null;
         if (carimbo.IsChecked == true && string.IsNullOrEmpty(act)) { Informar("Informe o endereço da ACT.", erro: true); return; }
+
+        var pasta = await EscolherPastaSaida("Pasta onde gravar os arquivos assinados");
+        if (pasta is null) return;
+        var oQue = Escolhido is { } ce ? $"Assinar {Arquivos.Count} arquivo(s) com o certificado:\n{CmsCifra.Nome(ce)} (válido até {ce.NotAfter:dd/MM/yyyy})"
+                                       : $"Assinar {Arquivos.Count} arquivo(s) com o certificado do arquivo {Path.GetFileName(Amb.Cfg.ArquivoPfx)}.";
+        if (!await AbrirCredencial(oQue)) { Informar("Assinatura cancelada."); return; }
+        if (Escolhido is not { } cert) { Informar("A credencial não tem certificado de assinatura.", erro: true); return; }
+        if (cert.NotAfter < DateTime.Now) { Informar($"O certificado venceu em {cert.NotAfter:dd/MM/yyyy}.", erro: true); return; }
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
         var comPdf = dentroDoPdf.IsChecked == true && Arquivos.Any(EhPdf);
@@ -242,14 +270,16 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
             return;
         }
 
-        var chave = Amb.Credencial.ChaveDe(cert);
+        RSA? chave;
+        try { chave = Amb.Credencial.ChaveDe(cert); }
+        catch (CryptographicException e) { Informar(e.Message, erro: true); Amb.DepoisDeUsar(); return; }
         var windows = Amb.Cfg.Modo == ModoCredencial.Windows;
         int feitos = 0, pulados = 0;
         var erros = new List<string>();
         foreach (var arquivo in Arquivos.ToList())
         {
             var pdf = comPdf && EhPdf(arquivo);
-            var destino = pdf ? Path.Combine(Path.GetDirectoryName(arquivo)!, Path.GetFileNameWithoutExtension(arquivo) + "-assinado.pdf") : arquivo + ".p7s";
+            var destino = Path.Combine(pasta, pdf ? Path.GetFileNameWithoutExtension(arquivo) + "-assinado.pdf" : Path.GetFileName(arquivo) + ".p7s");
             var pode = await PodeGravar(destino);
             if (pode is null) break;
             if (pode == false) { pulados++; continue; }
@@ -257,7 +287,7 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
             {
                 var dados = await File.ReadAllBytesAsync(arquivo);
                 var polAct = NuloSeVazio(Amb.Cfg.PoliticaAct);
-                var estampa = new Estampa(Amb.Cfg.Estampa, Amb.Cfg.PaginaEstampa, Amb.Cfg.PosicaoEstampa, bytesLogo, NuloSeVazio(motivo.Text ?? ""));
+                var estampa = new Estampa(Amb.Cfg.MostrarEstampa ? EstiloEstampa.Visivel : EstiloEstampa.Nenhuma, Amb.Cfg.PaginaEstampa, Amb.Cfg.PosicaoEstampa, bytesLogo, NuloSeVazio(motivo.Text ?? ""));
                 // no modo Windows a assinatura roda na tela, para o middleware poder pedir o PIN
                 Func<Task<byte[]>> assinar = pdf
                     ? () => AssinaturaPdf.Assinar(dados, cert, chave, polPdf, act, http, estampa, null, polAct, silencioso: !windows)
@@ -278,7 +308,7 @@ sealed class PaginaAssinar : PaginaArquivos, IAoMostrar
                      ((pol ?? polPdf) is null ? "" : ", com a política ICP-Brasil " + (pol is null ? "" : pol.Nome) +
                       (pol is not null && polPdf is not null ? " e " : "") + (polPdf is null ? "" : polPdf.Nome)) +
                      (act is null ? "" : ", com carimbo do tempo") +
-                     ". Os resultados (.p7s ou -assinado.pdf) estão na mesma pasta dos originais.";
+                     $". Os resultados (.p7s ou -assinado.pdf) estão em {pasta}.";
         Informar(erros.Count == 0 ? resumo : resumo + "\nFalhas:\n" + string.Join("\n", erros), erro: erros.Count > 0);
     }
 

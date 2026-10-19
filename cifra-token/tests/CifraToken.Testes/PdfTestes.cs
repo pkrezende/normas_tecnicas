@@ -30,8 +30,7 @@ public class PdfTestes
     }
 
     [Theory]
-    [InlineData(EstiloEstampa.Carimbo)]
-    [InlineData(EstiloEstampa.Assinatura)]
+    [InlineData(EstiloEstampa.Visivel)]
     [InlineData(EstiloEstampa.Nenhuma)]
     public async Task AssinaEVerificaPdf(EstiloEstampa estilo)
     {
@@ -54,7 +53,7 @@ public class PdfTestes
     {
         using var cert = AssinaturaTestes.Signatario();
         var pol = PoliticaIcp.Ler(File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "dados", "PA_AD_RB_v2_3.der")), "AD-RB", "http://x/PA_AD_RB_v2_3.der");
-        var pdf = await AssinaturaPdf.Assinar(PdfSimples(1), cert, null, pol, null, null, new Estampa(EstiloEstampa.Carimbo));
+        var pdf = await AssinaturaPdf.Assinar(PdfSimples(1), cert, null, pol, null, null, new Estampa(EstiloEstampa.Visivel));
         var v = Assert.Single(AssinaturaPdf.Verificar(pdf));
         Assert.Equal(pol.Oid, v.Assinatura.Politica);
     }
@@ -63,7 +62,7 @@ public class PdfTestes
     public async Task AlteracaoNoPdfInvalidaAssinatura()
     {
         using var cert = AssinaturaTestes.Signatario();
-        var pdf = await AssinaturaPdf.Assinar(PdfSimples(), cert, null, null, null, null, new Estampa(EstiloEstampa.Carimbo));
+        var pdf = await AssinaturaPdf.Assinar(PdfSimples(), cert, null, null, null, null, new Estampa(EstiloEstampa.Visivel));
         pdf[300] ^= 0x01; // antes do buraco da assinatura
         Assert.False(Assert.Single(AssinaturaPdf.Verificar(pdf)).Assinatura.Integra);
     }

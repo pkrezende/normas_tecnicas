@@ -26,11 +26,14 @@ sealed class Configuracao
     public string PoliticaAct { get; set; } = "";
     /// <summary>PDF: assinar dentro do arquivo (PAdES) com estampa visível.</summary>
     public bool AssinarDentroDoPdf { get; set; } = true;
-    public EstiloEstampa Estampa { get; set; } = EstiloEstampa.Carimbo;
+    /// <summary>Estampa visível no PDF: redonda "CARIMBADO E ASSINADO" com carimbo do tempo, quadro de assinatura sem.</summary>
+    public bool MostrarEstampa { get; set; } = true;
     public PosicaoEstampa PosicaoEstampa { get; set; } = PosicaoEstampa.InferiorDireito;
     /// <summary>0 = última página, 1 = primeira.</summary>
     public int PaginaEstampa { get; set; }
     public string ArquivoLogo { get; set; } = "";
+    /// <summary>Última pasta escolhida para gravar os resultados.</summary>
+    public string UltimaPasta { get; set; } = "";
 
     public static Configuracao Ler()
     {

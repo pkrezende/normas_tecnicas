@@ -64,6 +64,38 @@ public static class CmsCifra
     }
 
     /// <summary>
+    /// Decifra com a primeira das chaves que for destinatária do arquivo. Primeiro pelo emissor e nº de série;
+    /// se nenhum confere (destinatário por identificador de chave, ou nome do emissor escrito de outro jeito),
+    /// tenta cada chave em cada destinatário: com a chave errada o RSA do token recusa o bloco.
+    /// </summary>
+    public static byte[] DecifrarComChaves(byte[] p7m, IReadOnlyList<(X509Certificate2 Cert, RSA Chave)> chaves)
+    {
+        var destinos = Destinatarios(p7m);
+        foreach (var (cert, chave) in chaves)
+            if (destinos.Any(d => d.Corresponde(cert)))
+                return Decifrar(p7m, cert, chave);
+
+        foreach (var (cert, chave) in chaves.Where(c => PermiteCifrar(c.Cert)))
+        {
+            var cms = Decodificar(p7m);
+            foreach (RecipientInfo ri in cms.RecipientInfos)
+            {
+                try
+                {
+                    cms.Decrypt(ri, chave);
+                    return cms.ContentInfo.Content;
+                }
+                catch (CryptographicException) { /* não era este destinatário */ }
+            }
+        }
+        throw new CryptographicException(
+            "O arquivo não foi cifrado para a credencial conectada.\n" +
+            "Cifrado para: " + string.Join("; ", destinos.Select(d => d.Resumo)) + "\n" +
+            "Credencial: " + string.Join("; ", chaves.Select(c => $"{Nome(c.Cert)} (nº de série {c.Cert.SerialNumber})")) + "\n" +
+            "Se o seu certificado foi renovado, o arquivo pode ter sido cifrado para o anterior.");
+    }
+
+    /// <summary>
     /// Decifra com uma chave privada explícita (por exemplo, a do token via PKCS#11),
     /// escolhendo o destinatário do arquivo que corresponde ao certificado.
     /// </summary>
@@ -141,9 +173,27 @@ public static class CmsCifra
 
 public sealed record Destinatario(string Emissor, string NumeroSerie)
 {
+    /// <summary>Mesmo nº de série e mesmo emissor (comparado sem diferenciar espaços e maiúsculas).</summary>
     public bool Corresponde(X509Certificate2 cert) =>
-        NumeroSerie.TrimStart('0').Equals(cert.SerialNumber.TrimStart('0'), StringComparison.OrdinalIgnoreCase)
-        && Emissor == cert.IssuerName.Name;
+        NumeroSerie.Length > 0
+        && NumeroSerie.TrimStart('0').Equals(cert.SerialNumber.TrimStart('0'), StringComparison.OrdinalIgnoreCase)
+        && (Emissor == cert.IssuerName.Name
+            || Normalizar(Emissor) == Normalizar(cert.IssuerName.Name)
+            || Normalizar(Emissor) == Normalizar(cert.IssuerName.Format(false)));
+
+    static string Normalizar(string dn) =>
+        new string(dn.Where(c => !char.IsWhiteSpace(c) && c != '"').ToArray()).ToUpperInvariant();
+
+    /// <summary>Emissor (só o CN) e nº de série, para mensagens.</summary>
+    public string Resumo
+    {
+        get
+        {
+            if (NumeroSerie.Length == 0) return Emissor;
+            var cn = Emissor.Split(", ").FirstOrDefault(p => p.StartsWith("CN=", StringComparison.OrdinalIgnoreCase))?[3..] ?? Emissor;
+            return $"certificado emitido por {cn}, nº de série {NumeroSerie}";
+        }
+    }
 
     public override string ToString() =>
         NumeroSerie.Length == 0 ? Emissor : $"Emissor: {Emissor} | Nº de série: {NumeroSerie}";

@@ -143,9 +143,11 @@ static class Ui
         return arquivo?.TryGetLocalPath();
     }
 
-    public static async Task<string?> EscolherPasta(Visual v, string titulo)
+    public static async Task<string?> EscolherPasta(Visual v, string titulo, string? inicial = null)
     {
-        var pastas = await Dono(v).StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = titulo });
+        var provedor = Dono(v).StorageProvider;
+        var comeco = Directory.Exists(inicial) ? await provedor.TryGetFolderFromPathAsync(inicial!) : null;
+        var pastas = await provedor.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = titulo, SuggestedStartLocation = comeco });
         return pastas.FirstOrDefault()?.TryGetLocalPath();
     }
 }

@@ -56,6 +56,30 @@ public class CmsCifraTestes
         Assert.Equal(1, opaca.Chamadas);
     }
 
+    /// <summary>Destinatário identificado pela chave (SKI, como o "openssl cms -keyid"): a chave do token é testada direto.</summary>
+    [Fact]
+    public void DecifraDestinatarioPorIdentificadorDeChave()
+    {
+        using var rsa = RSA.Create(2048);
+        var req = new CertificateRequest("CN=titular ski, O=ICP-Brasil, C=BR", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        req.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyEncipherment, true));
+        req.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(req.PublicKey, false));
+        using var cert = req.CreateSelfSigned(DateTimeOffset.Now.AddDays(-1), DateTimeOffset.Now.AddDays(30));
+        var publico = X509CertificateLoader.LoadCertificate(cert.RawData);
+        var env = new System.Security.Cryptography.Pkcs.EnvelopedCms(new System.Security.Cryptography.Pkcs.ContentInfo(Original));
+        env.Encrypt(new System.Security.Cryptography.Pkcs.CmsRecipient(System.Security.Cryptography.Pkcs.SubjectIdentifierType.SubjectKeyIdentifier, publico));
+        var p7m = env.Encode();
+
+        using var opaca = new RsaOpaca(rsa);
+        Assert.Equal(Original, CmsCifra.DecifrarComChaves(p7m, new[] { (publico, (RSA)opaca) }));
+
+        using var outro = Laboratorio("outro");
+        using var chaveOutra = new RsaOpaca(outro.GetRSAPrivateKey()!);
+        var erro = Assert.ThrowsAny<CryptographicException>(() =>
+            CmsCifra.DecifrarComChaves(p7m, new[] { (X509CertificateLoader.LoadCertificate(outro.RawData), (RSA)chaveOutra) }));
+        Assert.Contains("Cifrado para:", erro.Message);
+    }
+
     [Fact]
     public void RecusaCertificadoQueNaoEDestinatario()
     {

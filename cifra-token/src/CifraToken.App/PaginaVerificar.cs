@@ -36,7 +36,7 @@ sealed class PaginaVerificar : PaginaArquivos
         {
             TextWrapping = TextWrapping.Wrap,
             Text = Arquivos.Count == 0
-                ? "Adicione os PDFs assinados, os arquivos assinados ou as assinaturas (.p7s). O original e o .p7s precisam estar na mesma pasta, com o mesmo nome (\"contrato.pdf\" e \"contrato.pdf.p7s\"). Um PDF sem .p7s ao lado tem as assinaturas internas conferidas. Depois clique em Ok."
+                ? "Adicione os PDFs assinados, os arquivos assinados ou as assinaturas (.p7s). Se o original não estiver na mesma pasta do .p7s, com o mesmo nome (\"contrato.pdf\" e \"contrato.pdf.p7s\"), o programa pergunta onde ele está. Um PDF sem .p7s ao lado tem as assinaturas internas conferidas. Depois clique em Ok."
                 : $"{Arquivos.Count} arquivo(s). Clique em Ok para verificar.",
         });
     }
@@ -46,8 +46,13 @@ sealed class PaginaVerificar : PaginaArquivos
         if (Arquivos.Count == 0) { Informar("Adicione os arquivos a verificar.", erro: true); return; }
         resultados.Children.Clear();
         int validas = 0, total = 0;
-        foreach (var (original, assinatura) in Arquivos.Select(Par).Distinct().ToList())
+        foreach (var (par, assinatura) in Arquivos.Select(Par).Distinct().ToList())
         {
+            var original = par;
+            // .p7s gravado em outra pasta: pergunta onde está o original
+            if (File.Exists(assinatura) && !File.Exists(original) &&
+                (await Ui.AbrirArquivos(this, $"Onde está o original de {Path.GetFileName(assinatura)}?", false, ("Todos os arquivos", new[] { "*" }))).FirstOrDefault() is { } achado)
+                original = achado;
             // PDF sem .p7s ao lado: assinaturas dentro do próprio arquivo (PAdES)
             if (original.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) && !File.Exists(assinatura) && File.Exists(original))
             {
@@ -79,7 +84,7 @@ sealed class PaginaVerificar : PaginaArquivos
             }
             total++;
             Verificacao? v = null;
-            string? falta = !File.Exists(original) ? $"Não encontrei o arquivo original \"{Path.GetFileName(original)}\" na mesma pasta."
+            string? falta = !File.Exists(original) ? $"Não encontrei o arquivo original \"{Path.GetFileName(original)}\"."
                 : !File.Exists(assinatura) ? $"Não encontrei a assinatura \"{Path.GetFileName(assinatura)}\" na mesma pasta." : null;
             if (falta is null)
             {

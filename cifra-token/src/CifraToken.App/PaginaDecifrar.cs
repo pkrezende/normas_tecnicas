@@ -8,8 +8,8 @@ using CifraToken.Core;
 namespace CifraToken.App;
 
 /// <summary>
-/// Decifrar Arquivos: pede a senha para os .enc e a conexão da credencial (token, Windows ou .pfx)
-/// para os .p7m; os decifrados são salvos ao lado dos cifrados, com o nome original.
+/// Decifrar Arquivos: pede a senha para os .enc e, ao clicar em Ok, a pasta de saída e o PIN da credencial
+/// (token ou .pfx) para os .p7m; os decifrados recebem o nome original.
 /// </summary>
 sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
 {
@@ -34,7 +34,7 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
             Spacing = 4, Children = { Ui.Rotulo("Digite a senha para decifrar o(s) arquivo(s):"), senha, mostrarSenha },
         });
 
-        credencial = new PainelCredencial(amb, (t, e) => Informar(t, e), "decifrar");
+        credencial = new PainelCredencial(amb, "decifrar");
         grupoToken = Ui.Grupo("Arquivo(s) cifrado(s) para destinatário(s)", credencial);
 
         Direita.Content = new StackPanel { Spacing = 4, Children = { aviso, grupoSenha, grupoToken } };
@@ -42,6 +42,7 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
     }
 
     public void AoMostrar() => credencial.Atualizar();
+
 
     protected override void ArquivosMudaram()
     {
@@ -54,7 +55,7 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
             : comSenha > 0 && comToken > 0
                 ? "Os arquivos selecionados usam tipos de criptografia diferentes: alguns precisam da senha e outros da sua chave privada (credencial criptográfica)."
                 : comSenha > 0 ? "Os arquivos selecionados foram cifrados com senha."
-                : "Os arquivos selecionados foram cifrados para destinatários: conecte a sua credencial criptográfica.";
+                : "Os arquivos selecionados foram cifrados para destinatários: ao clicar em Ok, o PIN da sua credencial é pedido.";
     }
 
     protected override void Limpar()
@@ -68,18 +69,17 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
         if (Arquivos.Count == 0) { Informar("Adicione os arquivos a decifrar.", erro: true); return; }
         var temSenha = Arquivos.Any(EhArquivoComSenha);
         if (temSenha && string.IsNullOrEmpty(senha.Text)) { Informar("Digite a senha dos arquivos cifrados com senha.", erro: true); return; }
-        if (Arquivos.Any(a => !EhArquivoComSenha(a)) && !Amb.Credencial.Conectada)
-        {
-            Informar("Conecte a sua credencial criptográfica (PIN e Conectar) para os arquivos cifrados para destinatários.", erro: true);
-            return;
-        }
+        var pasta = await EscolherPastaSaida("Pasta onde gravar os arquivos decifrados");
+        if (pasta is null) return;
+        var p7m = Arquivos.Where(a => !EhArquivoComSenha(a)).ToList();
+        if (p7m.Count > 0 && !await AbrirCredencial(DescreverP7m(p7m))) { Informar("Operação cancelada."); return; }
 
         var s = senha.Text ?? "";
         int feitos = 0, pulados = 0;
         var erros = new List<string>();
         foreach (var arquivo in Arquivos.ToList())
         {
-            var destino = NomeOriginal(arquivo);
+            var destino = Path.Combine(pasta, Path.GetFileName(NomeOriginal(arquivo)));
             var pode = await PodeGravar(destino);
             if (pode is null) break;
             if (pode == false) { pulados++; continue; }
@@ -101,9 +101,22 @@ sealed class PaginaDecifrar : PaginaArquivos, IAoMostrar
         }
         Amb.DepoisDeUsar();
         var resumo = $"Foram decifrados {feitos} arquivo(s)" + (pulados > 0 ? $", {pulados} pulado(s)" : "") +
-                     ", salvos na mesma pasta dos cifrados, com o nome original.";
+                     $", salvos em {pasta} com o nome original.";
         Informar(erros.Count == 0 ? resumo : resumo + "\nFalhas:\n" + string.Join("\n", erros), erro: erros.Count > 0);
         senha.Text = "";
+    }
+
+    /// <summary>Texto da janela do PIN: os arquivos e para quem foram cifrados.</summary>
+    static string DescreverP7m(List<string> arquivos)
+    {
+        var texto = arquivos.Count == 1 ? $"Decifrar {Path.GetFileName(arquivos[0])}" : $"Decifrar {arquivos.Count} arquivos";
+        try
+        {
+            var para = CmsCifra.Destinatarios(File.ReadAllBytes(arquivos[0])).Select(d => d.Resumo).Distinct().Take(3).ToList();
+            if (para.Count > 0) texto += ", cifrado para:\n" + string.Join("\n", para);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or CryptographicException) { }
+        return texto + ".";
     }
 
     /// <summary>"relatorio.pdf.p7m" vira "relatorio.pdf"; sem extensão conhecida, acrescenta ".decifrado".</summary>

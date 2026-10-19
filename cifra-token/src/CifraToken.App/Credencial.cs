@@ -25,6 +25,14 @@ sealed class Credencial : IDisposable
         ? "Repositório do Windows (o middleware do token pede o PIN)"
         : string.Join("; ", chaves.Select(c => CmsCifra.Nome(c.Cert)).Distinct());
 
+    /// <summary>De onde vem a credencial, para mostrar antes de abri-la.</summary>
+    public string Origem => cfg.Modo switch
+    {
+        ModoCredencial.Pfx => "Arquivo " + Path.GetFileName(cfg.ArquivoPfx),
+        ModoCredencial.Windows => Descricao,
+        _ => "Token, pelo driver " + Path.GetFileName(cfg.Driver),
+    };
+
     public string RotuloSenha => cfg.Modo == ModoCredencial.Pfx ? "Senha do arquivo .pfx:" : "PIN para acesso à credencial:";
 
     /// <summary>Aviso do token sobre tentativas de PIN restantes, lido sem gastar tentativa.</summary>
@@ -51,7 +59,7 @@ sealed class Credencial : IDisposable
                     throw new CryptographicException("Configure o driver do token em Preferências > Credencial.");
                 if (!File.Exists(cfg.Driver))
                     throw new CryptographicException($"O arquivo do driver do token não foi encontrado em \"{cfg.Driver}\". Verifique as Preferências.");
-                if (string.IsNullOrEmpty(pin)) throw new CryptographicException("Digite o PIN do token e clique em Conectar.");
+                if (string.IsNullOrEmpty(pin)) throw new CryptographicException("Digite o PIN do token.");
                 token = new TokenPkcs11(cfg.Driver);
                 var certs = token.Certificados();
                 if (certs.Count == 0)
@@ -83,28 +91,46 @@ sealed class Credencial : IDisposable
     public byte[] Decifrar(byte[] p7m)
     {
         if (cfg.Modo == ModoCredencial.Windows) return CmsCifra.Decifrar(p7m);
-        var destinos = CmsCifra.Destinatarios(p7m);
-        foreach (var (cert, chave) in chaves)
-            if (destinos.Any(d => d.Corresponde(cert)))
-                return CmsCifra.Decifrar(p7m, cert, chave);
-        throw new CryptographicException(
-            "O arquivo não foi cifrado para a credencial conectada. Se o seu certificado foi renovado, " +
-            "o arquivo pode ter sido cifrado para o anterior.");
+        return CmsCifra.DecifrarComChaves(p7m, chaves);
     }
 
     /// <summary>Certificados que podem assinar (uso de chave digitalSignature ou nonRepudiation) e têm chave acessível.</summary>
     public List<X509Certificate2> CertificadosAssinatura()
     {
-        var lista = cfg.Modo == ModoCredencial.Windows
-            ? Repositorio.Pessoais().Where(c => c.HasPrivateKey)
-            : chaves.Select(c => c.Cert);
+        var lista = cfg.Modo switch
+        {
+            ModoCredencial.Windows => Repositorio.Pessoais().Where(c => c.HasPrivateKey),
+            // sem PIN ainda: os certificados do token são públicos e o PIN é pedido ao assinar
+            ModoCredencial.Token when chaves.Count == 0 => CertificadosDoToken(),
+            _ => chaves.Select(c => c.Cert),
+        };
         return lista.Where(PodeAssinar).OrderByDescending(c => c.NotAfter).ToList();
     }
 
     /// <summary>Chave do certificado conectado; nula no modo Windows (o .NET usa a do repositório e o middleware pede o PIN).</summary>
     public RSA? ChaveDe(X509Certificate2 cert) => cfg.Modo == ModoCredencial.Windows
         ? null
-        : chaves.First(c => c.Cert.Thumbprint == cert.Thumbprint).Chave;
+        : chaves.FirstOrDefault(c => c.Cert.Thumbprint == cert.Thumbprint).Chave
+          ?? throw new CryptographicException("O token não tem a chave privada do certificado escolhido.");
+
+    List<X509Certificate2>? doToken;
+
+    /// <summary>Certificados lidos do token sem PIN, guardados até a credencial mudar.</summary>
+    List<X509Certificate2> CertificadosDoToken()
+    {
+        if (doToken is not null) return doToken;
+        if (!File.Exists(cfg.Driver)) return new();
+        try
+        {
+            using var t = new TokenPkcs11(cfg.Driver);
+            return doToken = t.Certificados().Select(c => c.Certificado).ToList();
+        }
+        catch (Exception e) when (e is CryptographicException or Pkcs11Exception or UnmanagedException
+                                      or DllNotFoundException or BadImageFormatException) { return new(); }
+    }
+
+    /// <summary>Esquece os certificados lidos do token (por exemplo, depois de trocar de token).</summary>
+    public void Reler() => doToken = null;
 
     static bool PodeAssinar(X509Certificate2 c) => c.Extensions.OfType<X509KeyUsageExtension>()
         .All(k => k.KeyUsages.HasFlag(X509KeyUsageFlags.DigitalSignature) || k.KeyUsages.HasFlag(X509KeyUsageFlags.NonRepudiation));

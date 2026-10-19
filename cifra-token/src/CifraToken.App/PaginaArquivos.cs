@@ -163,6 +163,50 @@ abstract class PaginaArquivos : UserControl
         barraMensagem.IsVisible = true;
     }
 
+    /// <summary>Quem escolhe a pasta de saída (trocável para testes da tela sem janela de diálogo).</summary>
+    internal static Func<Visual, string, string?, Task<string?>> SeletorDePasta = Ui.EscolherPasta;
+
+    /// <summary>
+    /// Pergunta em que pasta gravar os resultados, começando pela última usada (ou a do primeiro arquivo).
+    /// Devolve null se o usuário cancelar.
+    /// </summary>
+    protected async Task<string?> EscolherPastaSaida(string titulo)
+    {
+        var inicial = Directory.Exists(Amb.Cfg.UltimaPasta) ? Amb.Cfg.UltimaPasta : Path.GetDirectoryName(Arquivos.FirstOrDefault() ?? "");
+        var pasta = await SeletorDePasta(this, titulo, inicial);
+        if (pasta is null) { Informar("Operação cancelada: nenhuma pasta escolhida para gravar os resultados."); return null; }
+        Amb.Cfg.UltimaPasta = pasta;
+        try { Amb.Cfg.Gravar(); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        return pasta;
+    }
+
+    /// <summary>
+    /// Se a credencial (token ou .pfx) ainda não estiver aberta, pede o PIN ou a senha numa janela própria e conecta.
+    /// No modo Windows não pede nada: o middleware do token pede o PIN na hora. Devolve false se o usuário cancelar.
+    /// </summary>
+    protected async Task<bool> AbrirCredencial(string oQue)
+    {
+        var cred = Amb.Credencial;
+        if (cred.Conectada) return true;
+        var aviso = await Task.Run(cred.AvisoPin);
+        var ok = await JanelaPin.Pedir(this, cred.RotuloSenha.TrimEnd(':'), oQue, aviso, async pin =>
+        {
+            try
+            {
+                await Task.Run(() => cred.Conectar(pin));
+                return null;
+            }
+            catch (Exception e) when (e is System.Security.Cryptography.CryptographicException or IOException
+                                          or Net.Pkcs11Interop.Common.Pkcs11Exception or Net.Pkcs11Interop.Common.UnmanagedException
+                                          or DllNotFoundException or BadImageFormatException)
+            {
+                return PainelCredencial.TextoErro(e);
+            }
+        });
+        Amb.Avisar();
+        return ok;
+    }
+
     /// <summary>Pergunta antes de sobrescrever: true grava, false pula, null para tudo.</summary>
     protected async Task<bool?> PodeGravar(string destino)
     {
